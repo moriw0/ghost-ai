@@ -4,23 +4,24 @@ Update this file whenever the current phase, active feature, or implementation s
 
 ## Current Phase
 
-- Not started
+- Phase 1: Foundation
 
 ## Current Goal
 
-- Define the immediate implementation goal here.
+- Canvas foundation (React Flow setup, node/edge types).
 
 ## Completed
 
-- None yet.
+- Context files added (project overview, architecture, UI context, code standards, AI workflow rules).
+- **01-design_system**: shadcn/ui configured with dark theme tokens in `globals.css`; Button, Card, Dialog, Input, Tabs, Textarea, ScrollArea added to `components/ui/`; lucide-react installed; `lib/utils.ts` with `cn()` created. Build verified clean.
 
 ## In Progress
 
-- None yet.
+- None.
 
 ## Next Up
 
-- Add the next planned feature unit here.
+- Canvas foundation (React Flow setup, node/edge types).
 
 ## Open Questions
 
