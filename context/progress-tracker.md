@@ -14,6 +14,7 @@ Update this file whenever the current phase, active feature, or implementation s
 
 - Context files added (project overview, architecture, UI context, code standards, AI workflow rules).
 - **01-design_system**: shadcn/ui configured with dark theme tokens in `globals.css`; Button, Card, Dialog, Input, Tabs, Textarea, ScrollArea added to `components/ui/`; lucide-react installed; `lib/utils.ts` with `cn()` created. Build verified clean.
+- **02-editor-chrome**: `EditorNavbar` and `ProjectSidebar` created in `components/editor/`. Navbar has fixed-height top bar with PanelLeftOpen/PanelLeftClose toggle. Sidebar floats as overlay (no content push), slides in from left, has My Projects/Shared tabs with empty states and full-width New Project button. Dialog pattern already in place via `components/ui/dialog.tsx` with correct color tokens.
 
 ## In Progress
 
