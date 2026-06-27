@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useRef } from "react";
+import { useCallback, useRef, useState } from "react";
 import {
   ReactFlow,
   MiniMap,
@@ -24,6 +24,15 @@ import { ControlBar } from "./control-bar";
 import { useKeyboardShortcuts } from "@/hooks/useKeyboardShortcuts";
 import { StarterTemplatesModal } from "@/components/editor/starter-templates-modal";
 import { type CanvasTemplate } from "@/components/editor/starter-templates";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { Button } from "@/components/ui/button";
 
 interface ShapeDragPayload {
   shape: string;
@@ -56,6 +65,7 @@ export function FlowCanvas({ templatesOpen, onTemplatesClose }: FlowCanvasProps)
 
   const nodeCounter = useRef(0);
   const flowInstance = useRef<ReactFlowInstance<CanvasNode, CanvasEdge> | null>(null);
+  const [pendingTemplate, setPendingTemplate] = useState<CanvasTemplate | null>(null);
 
   const undo = useUndo();
   const redo = useRedo();
@@ -160,15 +170,27 @@ export function FlowCanvas({ templatesOpen, onTemplatesClose }: FlowCanvasProps)
     []
   );
 
-  const handleTemplateImport = useCallback(
+  const applyTemplate = useCallback(
     (template: CanvasTemplate) => {
       loadTemplate(template);
       onTemplatesClose();
+      setPendingTemplate(null);
       setTimeout(() => {
         flowInstance.current?.fitView({ padding: 0.15, duration: 500 });
       }, 150);
     },
     [loadTemplate, onTemplatesClose]
+  );
+
+  const handleTemplateImport = useCallback(
+    (template: CanvasTemplate) => {
+      if (nodes.length > 0) {
+        setPendingTemplate(template);
+      } else {
+        applyTemplate(template);
+      }
+    },
+    [nodes.length, applyTemplate]
   );
 
   const onDragOver = useCallback((e: React.DragEvent) => {
@@ -237,6 +259,31 @@ export function FlowCanvas({ templatesOpen, onTemplatesClose }: FlowCanvasProps)
         onClose={onTemplatesClose}
         onImport={handleTemplateImport}
       />
+      <Dialog
+        open={pendingTemplate !== null}
+        onOpenChange={(open) => { if (!open) setPendingTemplate(null); }}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Replace canvas?</DialogTitle>
+            <DialogDescription>
+              Loading this template will permanently clear all existing nodes and
+              edges. This action cannot be undone.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setPendingTemplate(null)}>
+              Cancel
+            </Button>
+            <Button
+              variant="destructive"
+              onClick={() => { if (pendingTemplate) applyTemplate(pendingTemplate); }}
+            >
+              Replace
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </>
   );
 }
