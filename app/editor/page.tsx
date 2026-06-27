@@ -9,7 +9,7 @@ export default async function EditorPage() {
   const [ownedProjects, sharedProjects] = await Promise.all([
     user ? getOwnedProjects(user.id) : Promise.resolve([]),
     user
-      ? getSharedProjects(user.primaryEmailAddress?.emailAddress ?? "")
+      ? getSharedProjects((user.primaryEmailAddress?.emailAddress ?? "").toLowerCase())
       : Promise.resolve([]),
   ]);
 

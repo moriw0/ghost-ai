@@ -16,24 +16,37 @@ interface ProjectSidebarProps {
   onDeleteProject: (project: ProjectSummary) => void;
   ownedProjects: ProjectSummary[];
   sharedProjects: ProjectSummary[];
+  activeProjectId?: string;
 }
 
 function ProjectItem({
   project,
   isOwned,
+  isActive,
   onRename,
   onDelete,
 }: {
   project: ProjectSummary;
   isOwned: boolean;
+  isActive?: boolean;
   onRename: (project: ProjectSummary) => void;
   onDelete: (project: ProjectSummary) => void;
 }) {
   const [menuOpen, setMenuOpen] = useState(false);
 
   return (
-    <div className="group relative flex items-center gap-2 rounded-xl px-2 py-2 hover:bg-[var(--bg-subtle)]">
-      <span className="flex-1 truncate text-sm text-[var(--text-primary)]">
+    <div
+      className={`group relative flex items-center gap-2 rounded-xl px-2 py-2 hover:bg-[var(--bg-subtle)] ${
+        isActive ? "bg-[var(--bg-subtle)]" : ""
+      }`}
+    >
+      <span
+        className={`flex-1 truncate text-sm ${
+          isActive
+            ? "font-medium text-[var(--accent-primary)]"
+            : "text-[var(--text-primary)]"
+        }`}
+      >
         {project.name}
       </span>
 
@@ -94,6 +107,7 @@ export function ProjectSidebar({
   onDeleteProject,
   ownedProjects,
   sharedProjects,
+  activeProjectId,
 }: ProjectSidebarProps) {
   return (
     <>
@@ -150,6 +164,7 @@ export function ProjectSidebar({
                       key={project.id}
                       project={project}
                       isOwned={true}
+                      isActive={project.id === activeProjectId}
                       onRename={onRenameProject}
                       onDelete={onDeleteProject}
                     />
@@ -174,6 +189,7 @@ export function ProjectSidebar({
                       key={project.id}
                       project={project}
                       isOwned={false}
+                      isActive={project.id === activeProjectId}
                       onRename={onRenameProject}
                       onDelete={onDeleteProject}
                     />
