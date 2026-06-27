@@ -4,6 +4,7 @@ import { useState } from "react";
 import { Bot, PanelLeftClose, PanelLeftOpen, Share2 } from "lucide-react";
 import { UserButton } from "@clerk/nextjs";
 
+import { CanvasWrapper } from "@/components/editor/canvas/canvas-wrapper";
 import { CreateProjectDialog } from "@/components/editor/dialogs/create-project-dialog";
 import { DeleteProjectDialog } from "@/components/editor/dialogs/delete-project-dialog";
 import { RenameProjectDialog } from "@/components/editor/dialogs/rename-project-dialog";
@@ -104,8 +105,8 @@ export function WorkspaceShell({
       />
 
       <div className="flex flex-1 pt-12">
-        <main className="flex flex-1 items-center justify-center bg-[var(--bg-base)]">
-          <p className="text-sm text-[var(--text-muted)]">Canvas coming soon</p>
+        <main className="relative flex flex-1 bg-[var(--bg-base)]">
+          <CanvasWrapper roomId={project.id} />
         </main>
 
         {aiSidebarOpen && (
