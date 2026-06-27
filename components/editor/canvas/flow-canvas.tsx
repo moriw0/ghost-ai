@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   ReactFlow,
   MiniMap,
@@ -13,7 +13,7 @@ import {
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 import { useLiveblocksFlow } from "@liveblocks/react-flow";
-import { useMutation, useUndo, useRedo } from "@liveblocks/react";
+import { useMutation, useUndo, useRedo, useUpdateMyPresence } from "@liveblocks/react";
 import { LiveObject } from "@liveblocks/client";
 import type { CanvasNode, CanvasEdge } from "@/types/canvas";
 import { DEFAULT_NODE_COLOR } from "@/types/canvas";
@@ -21,9 +21,13 @@ import { CanvasNodeComponent } from "./canvas-node";
 import { CanvasEdgeComponent } from "./canvas-edge";
 import { ShapePanel } from "./shape-panel";
 import { ControlBar } from "./control-bar";
+import { LiveCursors } from "./live-cursors";
+import { PresenceAvatars } from "./presence-avatars";
 import { useKeyboardShortcuts } from "@/hooks/useKeyboardShortcuts";
+import { useCanvasAutosave } from "@/hooks/use-canvas-autosave";
 import { StarterTemplatesModal } from "@/components/editor/starter-templates-modal";
 import { type CanvasTemplate } from "@/components/editor/starter-templates";
+import { Panel } from "@xyflow/react";
 import {
   Dialog,
   DialogContent,
@@ -54,21 +58,47 @@ const edgeTypes = {
   canvasEdge: CanvasEdgeComponent,
 };
 
+function SaveStatusIndicator({ status }: { status: ReturnType<typeof useCanvasAutosave>["status"] }) {
+  if (status === "idle") return null;
+
+  const label =
+    status === "saving"
+      ? "Saving..."
+      : status === "saved"
+      ? "Saved"
+      : "Save failed";
+
+  const color =
+    status === "error"
+      ? "text-[var(--status-error,#f87171)]"
+      : "text-[var(--text-muted)]";
+
+  return (
+    <span className={`text-xs ${color} select-none`}>
+      {label}
+    </span>
+  );
+}
+
 interface FlowCanvasProps {
+  projectId: string;
   templatesOpen: boolean;
   onTemplatesClose: () => void;
 }
 
-export function FlowCanvas({ templatesOpen, onTemplatesClose }: FlowCanvasProps) {
+export function FlowCanvas({ projectId, templatesOpen, onTemplatesClose }: FlowCanvasProps) {
   const { nodes, edges, onNodesChange, onEdgesChange, onDelete } =
     useLiveblocksFlow<CanvasNode, CanvasEdge>({ suspense: true });
 
   const nodeCounter = useRef(0);
   const flowInstance = useRef<ReactFlowInstance<CanvasNode, CanvasEdge> | null>(null);
   const [pendingTemplate, setPendingTemplate] = useState<CanvasTemplate | null>(null);
+  const [loadComplete, setLoadComplete] = useState(false);
+  const hasCheckedRef = useRef(false);
 
   const undo = useUndo();
   const redo = useRedo();
+  const updateMyPresence = useUpdateMyPresence();
 
   const addCanvasNode = useMutation(
     (
@@ -170,6 +200,94 @@ export function FlowCanvas({ templatesOpen, onTemplatesClose }: FlowCanvasProps)
     []
   );
 
+  const writeToStorage = useMutation(
+    ({ storage }, data: { nodes: CanvasNode[]; edges: CanvasEdge[] }) => {
+      const flow = storage.get("flow");
+      const nodesMap = flow.get("nodes");
+      const edgesMap = flow.get("edges");
+
+      for (const node of data.nodes) {
+        nodesMap.set(
+          node.id,
+          new LiveObject({
+            id: node.id,
+            type: "canvasNode" as const,
+            position: node.position,
+            data: {
+              label: (node.data?.label as string) ?? "",
+              color: (node.data?.color as string | undefined) ?? DEFAULT_NODE_COLOR.fill,
+              shape: (node.data?.shape as string | undefined) ?? "rectangle",
+            },
+            width: node.width ?? 120,
+            height: node.height ?? 70,
+          }) as never
+        );
+      }
+
+      for (const edge of data.edges) {
+        edgesMap.set(
+          edge.id,
+          new LiveObject({
+            id: edge.id,
+            type: "canvasEdge" as const,
+            source: edge.source,
+            target: edge.target,
+            sourceHandle: edge.sourceHandle ?? null,
+            targetHandle: edge.targetHandle ?? null,
+            data: { label: (edge.data?.label as string | undefined) ?? undefined },
+          }) as never
+        );
+      }
+    },
+    []
+  );
+
+  // On mount: if the room is empty and a saved canvas exists, restore it from the API.
+  // Skipped if the room already has active nodes or edges to protect live collaboration.
+  useEffect(() => {
+    if (hasCheckedRef.current) return;
+    hasCheckedRef.current = true;
+
+    if (nodes.length > 0 || edges.length > 0) {
+      setLoadComplete(true);
+      return;
+    }
+
+    let cancelled = false;
+    fetch(`/api/projects/${projectId}/canvas`)
+      .then(async (res) => {
+        if (cancelled) return;
+        if (res.status === 204 || !res.ok) {
+          setLoadComplete(true);
+          return;
+        }
+        const data = await res.json() as { nodes: CanvasNode[]; edges: CanvasEdge[] };
+        if (cancelled) return;
+        if ((data.nodes?.length ?? 0) > 0 || (data.edges?.length ?? 0) > 0) {
+          writeToStorage(data);
+          setTimeout(() => {
+            flowInstance.current?.fitView({ padding: 0.15, duration: 500 });
+          }, 150);
+        }
+        setLoadComplete(true);
+      })
+      .catch(() => {
+        if (!cancelled) setLoadComplete(true);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const { status: saveStatus } = useCanvasAutosave({
+    projectId,
+    nodes,
+    edges,
+    enabled: loadComplete,
+  });
+
   const applyTemplate = useCallback(
     (template: CanvasTemplate) => {
       loadTemplate(template);
@@ -192,6 +310,22 @@ export function FlowCanvas({ templatesOpen, onTemplatesClose }: FlowCanvasProps)
     },
     [nodes.length, applyTemplate]
   );
+
+  const handleMouseMove = useCallback(
+    (e: React.MouseEvent) => {
+      if (!flowInstance.current) return;
+      const position = flowInstance.current.screenToFlowPosition({
+        x: e.clientX,
+        y: e.clientY,
+      });
+      updateMyPresence({ cursor: position });
+    },
+    [updateMyPresence]
+  );
+
+  const handleMouseLeave = useCallback(() => {
+    updateMyPresence({ cursor: null });
+  }, [updateMyPresence]);
 
   const onDragOver = useCallback((e: React.DragEvent) => {
     e.preventDefault();
@@ -246,11 +380,20 @@ export function FlowCanvas({ templatesOpen, onTemplatesClose }: FlowCanvasProps)
         }}
         onDragOver={onDragOver}
         onDrop={onDrop}
+        onPaneMouseMove={handleMouseMove}
+        onPaneMouseLeave={handleMouseLeave}
         fitView
       >
         <ControlBar />
         <ShapePanel />
         <KeyboardShortcutsHandler undo={undo} redo={redo} />
+        <Panel position="top-right">
+          <PresenceAvatars />
+        </Panel>
+        <Panel position="top-left">
+          <SaveStatusIndicator status={saveStatus} />
+        </Panel>
+        <LiveCursors />
         <MiniMap />
         <Background variant={BackgroundVariant.Dots} />
       </ReactFlow>

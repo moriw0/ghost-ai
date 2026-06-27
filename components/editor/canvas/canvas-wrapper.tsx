@@ -7,16 +7,17 @@ import { FlowCanvas } from "./flow-canvas";
 
 interface CanvasWrapperProps {
   roomId: string;
+  projectId: string;
   templatesOpen: boolean;
   onTemplatesClose: () => void;
 }
 
-export function CanvasWrapper({ roomId, templatesOpen, onTemplatesClose }: CanvasWrapperProps) {
+export function CanvasWrapper({ roomId, projectId, templatesOpen, onTemplatesClose }: CanvasWrapperProps) {
   return (
     <LiveblocksProvider authEndpoint="/api/liveblocks-auth">
       <RoomProvider
         id={roomId}
-        initialPresence={{ cursor: null, isThinking: false }}
+        initialPresence={{ cursor: null, thinking: false }}
         initialStorage={() => ({
           flow: new LiveObject({
             nodes: new LiveMap(),
@@ -26,7 +27,11 @@ export function CanvasWrapper({ roomId, templatesOpen, onTemplatesClose }: Canva
       >
         <CanvasErrorBoundary>
           <ClientSideSuspense fallback={<CanvasLoading />}>
-            <FlowCanvas templatesOpen={templatesOpen} onTemplatesClose={onTemplatesClose} />
+            <FlowCanvas
+              projectId={projectId}
+              templatesOpen={templatesOpen}
+              onTemplatesClose={onTemplatesClose}
+            />
           </ClientSideSuspense>
         </CanvasErrorBoundary>
       </RoomProvider>
