@@ -19,13 +19,13 @@ function createPrismaClient() {
   return new PrismaClient({ adapter })
 }
 
-type PrismaClientSingleton = ReturnType<typeof createPrismaClient>
-
 const globalForPrisma = globalThis as unknown as {
-  prisma: PrismaClientSingleton | undefined
+  prisma: PrismaClient | undefined
 }
 
-export const prisma: PrismaClientSingleton = globalForPrisma.prisma ?? createPrismaClient()
+export const prisma: PrismaClient =
+  globalForPrisma.prisma ??
+  (createPrismaClient() as unknown as PrismaClient)
 
 if (process.env.NODE_ENV !== 'production') {
   globalForPrisma.prisma = prisma

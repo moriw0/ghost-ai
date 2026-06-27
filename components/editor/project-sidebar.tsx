@@ -6,24 +6,28 @@ import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { MOCK_PROJECTS, MockProject } from "@/lib/mock-projects";
+import type { ProjectSummary } from "@/lib/projects";
 
 interface ProjectSidebarProps {
   isOpen: boolean;
   onClose: () => void;
   onCreateProject: () => void;
-  onRenameProject: (project: MockProject) => void;
-  onDeleteProject: (project: MockProject) => void;
+  onRenameProject: (project: ProjectSummary) => void;
+  onDeleteProject: (project: ProjectSummary) => void;
+  ownedProjects: ProjectSummary[];
+  sharedProjects: ProjectSummary[];
 }
 
 function ProjectItem({
   project,
+  isOwned,
   onRename,
   onDelete,
 }: {
-  project: MockProject;
-  onRename: (project: MockProject) => void;
-  onDelete: (project: MockProject) => void;
+  project: ProjectSummary;
+  isOwned: boolean;
+  onRename: (project: ProjectSummary) => void;
+  onDelete: (project: ProjectSummary) => void;
 }) {
   const [menuOpen, setMenuOpen] = useState(false);
 
@@ -33,7 +37,7 @@ function ProjectItem({
         {project.name}
       </span>
 
-      {project.isOwned && (
+      {isOwned && (
         <div className="relative">
           <button
             onClick={(e) => {
@@ -88,13 +92,11 @@ export function ProjectSidebar({
   onCreateProject,
   onRenameProject,
   onDeleteProject,
+  ownedProjects,
+  sharedProjects,
 }: ProjectSidebarProps) {
-  const myProjects = MOCK_PROJECTS.filter((p) => p.isOwned);
-  const sharedProjects = MOCK_PROJECTS.filter((p) => !p.isOwned);
-
   return (
     <>
-      {/* Mobile backdrop scrim */}
       {isOpen && (
         <div
           className="fixed inset-0 z-20 bg-black/50 sm:hidden"
@@ -135,7 +137,7 @@ export function ProjectSidebar({
 
           <TabsContent value="my-projects" className="flex-1 px-3 py-2">
             <ScrollArea className="h-full">
-              {myProjects.length === 0 ? (
+              {ownedProjects.length === 0 ? (
                 <div className="flex flex-col items-center justify-center py-12 text-center">
                   <p className="text-sm text-[var(--text-muted)]">
                     No projects yet
@@ -143,10 +145,11 @@ export function ProjectSidebar({
                 </div>
               ) : (
                 <div className="flex flex-col gap-0.5">
-                  {myProjects.map((project) => (
+                  {ownedProjects.map((project) => (
                     <ProjectItem
                       key={project.id}
                       project={project}
+                      isOwned={true}
                       onRename={onRenameProject}
                       onDelete={onDeleteProject}
                     />
@@ -170,6 +173,7 @@ export function ProjectSidebar({
                     <ProjectItem
                       key={project.id}
                       project={project}
+                      isOwned={false}
                       onRename={onRenameProject}
                       onDelete={onDeleteProject}
                     />
