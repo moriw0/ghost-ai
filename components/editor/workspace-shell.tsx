@@ -4,6 +4,7 @@ import { useState } from "react";
 import { Bot, LayoutTemplate, PanelLeftClose, PanelLeftOpen, Share2 } from "lucide-react";
 import { UserButton } from "@clerk/nextjs";
 
+import { AiSidebar } from "@/components/editor/ai-sidebar";
 import { CanvasWrapper } from "@/components/editor/canvas/canvas-wrapper";
 import { CreateProjectDialog } from "@/components/editor/dialogs/create-project-dialog";
 import { DeleteProjectDialog } from "@/components/editor/dialogs/delete-project-dialog";
@@ -95,6 +96,8 @@ export function WorkspaceShell({
                   : "text-[var(--text-muted)] hover:text-[var(--text-primary)]"
               }`}
               aria-label="Toggle AI sidebar"
+              aria-expanded={aiSidebarOpen}
+              aria-controls="ai-sidebar"
             >
               <Bot className="h-5 w-5" />
             </button>
@@ -118,26 +121,14 @@ export function WorkspaceShell({
         <main className="relative flex flex-1 bg-[var(--bg-base)]">
           <CanvasWrapper
             roomId={project.id}
+            projectId={project.id}
             templatesOpen={templatesOpen}
             onTemplatesClose={() => setTemplatesOpen(false)}
           />
         </main>
-
-        {aiSidebarOpen && (
-          <aside className="flex w-80 flex-shrink-0 flex-col border-l border-[var(--border-default)] bg-[var(--bg-surface)]">
-            <div className="flex items-center border-b border-[var(--border-default)] px-4 py-3">
-              <span className="text-sm font-semibold text-[var(--text-primary)]">
-                AI Assistant
-              </span>
-            </div>
-            <div className="flex flex-1 items-center justify-center">
-              <p className="text-sm text-[var(--text-muted)]">
-                AI chat coming soon
-              </p>
-            </div>
-          </aside>
-        )}
       </div>
+
+      <AiSidebar isOpen={aiSidebarOpen} onClose={() => setAiSidebarOpen(false)} />
 
       <ShareDialog
         open={shareOpen}
