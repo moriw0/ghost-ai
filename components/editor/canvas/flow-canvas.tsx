@@ -93,7 +93,7 @@ export function FlowCanvas({ projectId, templatesOpen, onTemplatesClose }: FlowC
   const nodeCounter = useRef(0);
   const flowInstance = useRef<ReactFlowInstance<CanvasNode, CanvasEdge> | null>(null);
   const [pendingTemplate, setPendingTemplate] = useState<CanvasTemplate | null>(null);
-  const [loadComplete, setLoadComplete] = useState(false);
+  const [loadComplete, setLoadComplete] = useState(() => nodes.length > 0 || edges.length > 0);
   const hasCheckedRef = useRef(false);
 
   const undo = useUndo();
@@ -249,7 +249,6 @@ export function FlowCanvas({ projectId, templatesOpen, onTemplatesClose }: FlowC
     hasCheckedRef.current = true;
 
     if (nodes.length > 0 || edges.length > 0) {
-      setLoadComplete(true);
       return;
     }
 
@@ -257,8 +256,11 @@ export function FlowCanvas({ projectId, templatesOpen, onTemplatesClose }: FlowC
     fetch(`/api/projects/${projectId}/canvas`)
       .then(async (res) => {
         if (cancelled) return;
-        if (res.status === 204 || !res.ok) {
+        if (res.status === 204) {
           setLoadComplete(true);
+          return;
+        }
+        if (!res.ok) {
           return;
         }
         const data = await res.json() as { nodes: CanvasNode[]; edges: CanvasEdge[] };

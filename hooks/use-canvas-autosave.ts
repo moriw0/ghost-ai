@@ -22,6 +22,7 @@ export function useCanvasAutosave({
 }: UseCanvasAutosaveOptions): { status: SaveStatus } {
   const [status, setStatus] = useState<SaveStatus>("idle");
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const saveVersionRef = useRef(0);
 
   useEffect(() => {
     if (!enabled) return;
@@ -31,6 +32,7 @@ export function useCanvasAutosave({
     }
 
     timerRef.current = setTimeout(() => {
+      const version = ++saveVersionRef.current;
       setStatus("saving");
       fetch(`/api/projects/${projectId}/canvas`, {
         method: "PUT",
@@ -38,10 +40,12 @@ export function useCanvasAutosave({
         body: JSON.stringify({ nodes, edges }),
       })
         .then((res) => {
+          if (saveVersionRef.current !== version) return;
           if (!res.ok) throw new Error("Save failed");
           setStatus("saved");
         })
         .catch(() => {
+          if (saveVersionRef.current !== version) return;
           setStatus("error");
         });
     }, debounceMs);

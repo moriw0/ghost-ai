@@ -96,6 +96,8 @@ export function WorkspaceShell({
                   : "text-[var(--text-muted)] hover:text-[var(--text-primary)]"
               }`}
               aria-label="Toggle AI sidebar"
+              aria-expanded={aiSidebarOpen}
+              aria-controls="ai-sidebar"
             >
               <Bot className="h-5 w-5" />
             </button>

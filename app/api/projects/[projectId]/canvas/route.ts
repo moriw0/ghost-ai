@@ -3,6 +3,43 @@ import { prisma } from "@/lib/prisma";
 import { getCurrentIdentity } from "@/lib/project-access";
 import type { NextRequest } from "next/server";
 
+interface RawNode {
+  id: string;
+  type: string;
+  position: { x: number; y: number };
+}
+
+interface RawEdge {
+  id: string;
+  source: string;
+  target: string;
+}
+
+interface CanvasPayload {
+  nodes: RawNode[];
+  edges: RawEdge[];
+}
+
+function isCanvasPayload(value: unknown): value is CanvasPayload {
+  if (!value || typeof value !== "object") return false;
+  const obj = value as Record<string, unknown>;
+  if (!Array.isArray(obj.nodes) || !Array.isArray(obj.edges)) return false;
+  for (const node of obj.nodes as unknown[]) {
+    if (!node || typeof node !== "object") return false;
+    const n = node as Record<string, unknown>;
+    if (typeof n.id !== "string" || typeof n.type !== "string") return false;
+    if (!n.position || typeof n.position !== "object") return false;
+    const pos = n.position as Record<string, unknown>;
+    if (typeof pos.x !== "number" || typeof pos.y !== "number") return false;
+  }
+  for (const edge of obj.edges as unknown[]) {
+    if (!edge || typeof edge !== "object") return false;
+    const e = edge as Record<string, unknown>;
+    if (typeof e.id !== "string" || typeof e.source !== "string" || typeof e.target !== "string") return false;
+  }
+  return true;
+}
+
 async function checkAccess(projectId: string) {
   const identity = await getCurrentIdentity();
   if (!identity) return null;
@@ -69,18 +106,13 @@ export async function PUT(
     return Response.json({ error: "Invalid request body" }, { status: 400 });
   }
 
-  if (
-    !body ||
-    typeof body !== "object" ||
-    !Array.isArray((body as { nodes?: unknown }).nodes) ||
-    !Array.isArray((body as { edges?: unknown }).edges)
-  ) {
-    return Response.json({ error: "nodes and edges arrays are required" }, { status: 400 });
+  if (!isCanvasPayload(body)) {
+    return Response.json({ error: "Invalid canvas payload" }, { status: 400 });
   }
 
   const blob = await put(
     `canvas/${projectId}.json`,
-    JSON.stringify(body),
+    JSON.stringify({ nodes: body.nodes, edges: body.edges }),
     { access: "private", contentType: "application/json", addRandomSuffix: false, allowOverwrite: true }
   );
 

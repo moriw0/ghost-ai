@@ -63,6 +63,9 @@ export function AiSidebar({ isOpen, onClose }: AiSidebarProps) {
 
   return (
     <aside
+      id="ai-sidebar"
+      aria-hidden={!isOpen}
+      inert={!isOpen}
       className={`fixed right-0 top-12 z-30 flex h-[calc(100vh-3rem)] w-80 flex-col border-l border-[var(--border-default)] bg-[var(--bg-base)]/95 shadow-xl backdrop-blur-sm transition-transform duration-200 ease-in-out ${
         isOpen ? "translate-x-0" : "translate-x-full"
       }`}
