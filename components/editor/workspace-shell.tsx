@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { Bot, PanelLeftClose, PanelLeftOpen, Share2 } from "lucide-react";
+import { Bot, LayoutTemplate, PanelLeftClose, PanelLeftOpen, Share2 } from "lucide-react";
 import { UserButton } from "@clerk/nextjs";
 
 import { CanvasWrapper } from "@/components/editor/canvas/canvas-wrapper";
@@ -30,6 +30,7 @@ export function WorkspaceShell({
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [aiSidebarOpen, setAiSidebarOpen] = useState(false);
   const [shareOpen, setShareOpen] = useState(false);
+  const [templatesOpen, setTemplatesOpen] = useState(false);
 
   const {
     dialog,
@@ -72,6 +73,15 @@ export function WorkspaceShell({
               variant="outline"
               size="sm"
               className="gap-1.5"
+              onClick={() => setTemplatesOpen(true)}
+            >
+              <LayoutTemplate className="h-3.5 w-3.5" />
+              Templates
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              className="gap-1.5"
               onClick={() => setShareOpen(true)}
             >
               <Share2 className="h-3.5 w-3.5" />
@@ -106,7 +116,11 @@ export function WorkspaceShell({
 
       <div className="flex flex-1 pt-12">
         <main className="relative flex flex-1 bg-[var(--bg-base)]">
-          <CanvasWrapper roomId={project.id} />
+          <CanvasWrapper
+            roomId={project.id}
+            templatesOpen={templatesOpen}
+            onTemplatesClose={() => setTemplatesOpen(false)}
+          />
         </main>
 
         {aiSidebarOpen && (

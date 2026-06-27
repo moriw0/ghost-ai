@@ -7,9 +7,11 @@ import { FlowCanvas } from "./flow-canvas";
 
 interface CanvasWrapperProps {
   roomId: string;
+  templatesOpen: boolean;
+  onTemplatesClose: () => void;
 }
 
-export function CanvasWrapper({ roomId }: CanvasWrapperProps) {
+export function CanvasWrapper({ roomId, templatesOpen, onTemplatesClose }: CanvasWrapperProps) {
   return (
     <LiveblocksProvider authEndpoint="/api/liveblocks-auth">
       <RoomProvider
@@ -24,7 +26,7 @@ export function CanvasWrapper({ roomId }: CanvasWrapperProps) {
       >
         <CanvasErrorBoundary>
           <ClientSideSuspense fallback={<CanvasLoading />}>
-            <FlowCanvas />
+            <FlowCanvas templatesOpen={templatesOpen} onTemplatesClose={onTemplatesClose} />
           </ClientSideSuspense>
         </CanvasErrorBoundary>
       </RoomProvider>
