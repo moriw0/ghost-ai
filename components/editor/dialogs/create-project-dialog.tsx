@@ -16,7 +16,7 @@ import { Input } from "@/components/ui/input";
 interface CreateProjectDialogProps {
   open: boolean;
   projectName: string;
-  projectSlug: string;
+  projectRoomId: string;
   isLoading: boolean;
   onProjectNameChange: (name: string) => void;
   onSubmit: () => void;
@@ -26,7 +26,7 @@ interface CreateProjectDialogProps {
 export function CreateProjectDialog({
   open,
   projectName,
-  projectSlug,
+  projectRoomId,
   isLoading,
   onProjectNameChange,
   onSubmit,
@@ -50,11 +50,11 @@ export function CreateProjectDialog({
             autoFocus
             onKeyDown={(e) => e.key === "Enter" && projectName.trim() && onSubmit()}
           />
-          {projectSlug && (
+          {projectRoomId && (
             <p className="text-xs text-[var(--text-muted)]">
-              Slug:{" "}
+              Room ID:{" "}
               <span className="font-mono text-[var(--text-secondary)]">
-                {projectSlug}
+                {projectRoomId}
               </span>
             </p>
           )}
