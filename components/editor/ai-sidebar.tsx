@@ -1,7 +1,8 @@
 "use client";
 
 import { Bot, Download, FileText, Loader2, MessageSquare, Send, X } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
+import { useRef } from "react";
 import { useRealtimeRun } from "@trigger.dev/react-hooks";
 import { useMutation, useOthers, useSelf, useStorage } from "@liveblocks/react";
 import { LiveObject } from "@liveblocks/client";
@@ -12,6 +13,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
 import { aiStatusMessageSchema, chatMessageSchema } from "@/types/tasks";
 import type { ChatMessage } from "@/types/tasks";
+import { SpecPreviewModal } from "@/components/editor/spec-preview-modal";
 
 const GREEN_ACCENT = "#62C073";
 const GREEN_ACCENT_TEXT = "#0F2E18";
@@ -20,17 +22,30 @@ function formatTime(ts: number): string {
   return new Date(ts).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 }
 
+function formatDate(iso: string): string {
+  return new Date(iso).toLocaleDateString([], {
+    month: "short",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}
+
 const STARTER_PROMPTS = [
   "Design an e-commerce backend",
   "Create a chat app architecture",
   "Build a CI/CD pipeline",
 ];
 
-const DEMO_SPEC = {
-  title: "Microservices Architecture",
-  snippet:
-    "API Gateway routes to Auth, Products, and Orders services backed by PostgreSQL and a Redis cache layer.",
-};
+interface SpecItem {
+  id: string;
+  createdAt: string;
+}
+
+interface SelectedSpec {
+  id: string;
+  filename: string;
+}
 
 interface AiSidebarProps {
   isOpen: boolean;
@@ -78,6 +93,39 @@ function RunTracker({
   return null;
 }
 
+function SpecRunTracker({
+  runId,
+  accessToken,
+  onComplete,
+  onError,
+}: {
+  runId: string;
+  accessToken: string;
+  onComplete: () => void;
+  onError: () => void;
+}) {
+  const { run } = useRealtimeRun(runId, { accessToken });
+
+  useEffect(() => {
+    if (!run) return;
+    if (run.status === "COMPLETED") {
+      onComplete();
+    } else if (
+      run.status === "FAILED" ||
+      run.status === "CANCELED" ||
+      run.status === "CRASHED" ||
+      run.status === "SYSTEM_FAILURE" ||
+      run.status === "TIMED_OUT" ||
+      run.status === "EXPIRED"
+    ) {
+      onError();
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [run?.status]);
+
+  return null;
+}
+
 export function AiSidebar({ isOpen, onClose, projectId, roomId }: AiSidebarProps) {
   const [input, setInput] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -89,6 +137,14 @@ export function AiSidebar({ isOpen, onClose, projectId, roomId }: AiSidebarProps
   const [chatError, setChatError] = useState<string | null>(null);
   const chatInputRef = useRef<HTMLTextAreaElement>(null);
   const chatBottomRef = useRef<HTMLDivElement>(null);
+
+  const [specs, setSpecs] = useState<SpecItem[]>([]);
+  const [specsLoading, setSpecsLoading] = useState(false);
+  const [selectedSpec, setSelectedSpec] = useState<SelectedSpec | null>(null);
+  const [activeTab, setActiveTab] = useState("architect");
+  const [specRunState, setSpecRunState] = useState<RunState | null>(null);
+  const [isGeneratingSpec, setIsGeneratingSpec] = useState(false);
+  const [specGenError, setSpecGenError] = useState<string | null>(null);
 
   const self = useSelf();
   const others = useOthers();
@@ -246,6 +302,70 @@ export function AiSidebar({ isOpen, onClose, projectId, roomId }: AiSidebarProps
     }
   }
 
+  const fetchSpecs = useCallback(async () => {
+    setSpecsLoading(true);
+    try {
+      const res = await fetch(`/api/projects/${projectId}/specs`);
+      if (!res.ok) throw new Error("Failed");
+      const data = (await res.json()) as { specs: SpecItem[] };
+      setSpecs(data.specs);
+    } catch {
+      // silently fail — user can switch tabs to retry
+    } finally {
+      setSpecsLoading(false);
+    }
+  }, [projectId]);
+
+  useEffect(() => {
+    if (activeTab === "specs") {
+      fetchSpecs();
+    }
+  }, [activeTab, fetchSpecs]);
+
+  async function generateSpec() {
+    setIsGeneratingSpec(true);
+    setSpecGenError(null);
+    try {
+      const canvasRes = await fetch(`/api/projects/${projectId}/canvas`);
+      let nodes: unknown[] = [];
+      let edges: unknown[] = [];
+      if (canvasRes.ok) {
+        const canvas = (await canvasRes.json()) as { nodes?: unknown[]; edges?: unknown[] };
+        nodes = canvas.nodes ?? [];
+        edges = canvas.edges ?? [];
+      }
+
+      const chatHistory = architectMessages.map((m) => ({
+        role: m.role,
+        content: m.content,
+      }));
+
+      const specRes = await fetch("/api/ai/spec", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ roomId, chatHistory, nodes, edges }),
+      });
+
+      if (!specRes.ok) throw new Error("Failed to start spec generation");
+
+      const { runId } = (await specRes.json()) as { runId: string };
+
+      const tokenRes = await fetch("/api/ai/spec/token", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ runId }),
+      });
+
+      if (!tokenRes.ok) throw new Error("Failed to get tracking token");
+
+      const { token } = (await tokenRes.json()) as { token: string };
+      setSpecRunState({ runId, accessToken: token });
+    } catch {
+      setSpecGenError("Failed to start spec generation. Please try again.");
+      setIsGeneratingSpec(false);
+    }
+  }
+
   const isProcessing = isSubmitting || runState !== null || isSharedProcessing;
   const isRunActive = runState !== null || isAiThinking;
 
@@ -264,6 +384,22 @@ export function AiSidebar({ isOpen, onClose, projectId, roomId }: AiSidebarProps
           accessToken={runState.accessToken}
           onComplete={handleRunComplete}
           onError={handleRunError}
+        />
+      )}
+      {specRunState && (
+        <SpecRunTracker
+          runId={specRunState.runId}
+          accessToken={specRunState.accessToken}
+          onComplete={() => {
+            setSpecRunState(null);
+            setIsGeneratingSpec(false);
+            fetchSpecs();
+          }}
+          onError={() => {
+            setSpecRunState(null);
+            setIsGeneratingSpec(false);
+            setSpecGenError("Spec generation failed. Please try again.");
+          }}
         />
       )}
 
@@ -296,7 +432,8 @@ export function AiSidebar({ isOpen, onClose, projectId, roomId }: AiSidebarProps
 
       {/* Tabs */}
       <Tabs
-        defaultValue="architect"
+        value={activeTab}
+        onValueChange={setActiveTab}
         className="flex min-h-0 flex-1 flex-col overflow-hidden"
       >
         <TabsList className="mx-4 mt-3 shrink-0 gap-1 bg-[var(--bg-subtle)] p-1">
@@ -512,37 +649,102 @@ export function AiSidebar({ isOpen, onClose, projectId, roomId }: AiSidebarProps
         </TabsContent>
 
         {/* Specs tab */}
-        <TabsContent value="specs" className="mt-0 flex flex-col gap-3 p-4">
-          <Button className="w-full bg-[var(--accent-primary)] text-[#080809] hover:bg-[var(--accent-primary)]/90">
-            Generate Spec
-          </Button>
-
-          <div className="rounded-2xl border border-[var(--border-default)] bg-[var(--bg-elevated)] p-4">
-            <div className="flex items-start gap-3">
-              <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl bg-[var(--bg-subtle)]">
-                <FileText className="h-4 w-4 text-[var(--accent-ai-text)]" />
-              </div>
-              <div className="min-w-0 flex-1">
-                <p className="text-sm font-medium text-[var(--text-primary)]">
-                  {DEMO_SPEC.title}
-                </p>
-                <p className="mt-1 line-clamp-2 text-xs text-[var(--text-muted)]">
-                  {DEMO_SPEC.snippet}
-                </p>
-              </div>
-            </div>
-            <div className="mt-3 flex justify-end">
-              <button
-                disabled
-                className="flex cursor-not-allowed items-center gap-1.5 rounded-xl px-2.5 py-1.5 text-xs text-[var(--text-faint)] opacity-50"
-              >
-                <Download className="h-3.5 w-3.5" />
-                Download
-              </button>
-            </div>
+        <TabsContent
+          value="specs"
+          className="mt-0 flex min-h-0 flex-1 flex-col overflow-hidden"
+        >
+          <div className="shrink-0 px-4 pb-2 pt-3 flex flex-col gap-2">
+            <Button
+              onClick={generateSpec}
+              disabled={isGeneratingSpec}
+              className="w-full bg-[var(--accent-primary)] text-[#080809] hover:bg-[var(--accent-primary)]/90 disabled:opacity-50"
+            >
+              {isGeneratingSpec ? (
+                <span className="flex items-center gap-2">
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  Generating...
+                </span>
+              ) : (
+                "Generate Spec"
+              )}
+            </Button>
+            {specGenError && (
+              <p className="text-xs text-[var(--state-error)]">{specGenError}</p>
+            )}
           </div>
+
+          <ScrollArea className="min-h-0 flex-1 px-4 pb-4">
+            {specsLoading && (
+              <div className="flex items-center justify-center py-16">
+                <Loader2 className="h-5 w-5 animate-spin text-[var(--text-muted)]" />
+              </div>
+            )}
+            {!specsLoading && specs.length === 0 && (
+              <div className="flex flex-col items-center gap-3 pt-8 text-center">
+                <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-[var(--bg-subtle)]">
+                  <FileText className="h-6 w-6 text-[var(--accent-ai-text)]" />
+                </div>
+                <div>
+                  <p className="text-sm font-medium text-[var(--text-primary)]">
+                    No specs yet
+                  </p>
+                  <p className="mt-1 text-xs leading-relaxed text-[var(--text-muted)]">
+                    Generate a spec to document your architecture.
+                  </p>
+                </div>
+              </div>
+            )}
+            {!specsLoading && specs.length > 0 && (
+              <div className="flex flex-col gap-2 pt-1">
+                {specs.map((spec) => {
+                  const filename = `spec-${spec.id}.md`;
+                  return (
+                    <div
+                      key={spec.id}
+                      className="group rounded-2xl border border-[var(--border-default)] bg-[var(--bg-elevated)] p-3 transition-colors hover:border-[var(--border-subtle)]"
+                    >
+                      <button
+                        className="flex w-full items-start gap-3 text-left"
+                        onClick={() => setSelectedSpec({ id: spec.id, filename })}
+                      >
+                        <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-xl bg-[var(--bg-subtle)]">
+                          <FileText className="h-3.5 w-3.5 text-[var(--accent-ai-text)]" />
+                        </div>
+                        <div className="min-w-0 flex-1">
+                          <p className="truncate text-xs font-medium text-[var(--text-primary)]">
+                            {filename}
+                          </p>
+                          <p className="mt-0.5 text-[10px] text-[var(--text-muted)]">
+                            {formatDate(spec.createdAt)}
+                          </p>
+                        </div>
+                      </button>
+                      <div className="mt-2 flex justify-end">
+                        <a
+                          href={`/api/projects/${projectId}/specs/${spec.id}/download`}
+                          download={filename}
+                          className="flex items-center gap-1.5 rounded-xl px-2 py-1 text-[10px] text-[var(--text-faint)] transition-colors hover:bg-[var(--bg-subtle)] hover:text-[var(--text-primary)]"
+                        >
+                          <Download className="h-3 w-3" />
+                          Download
+                        </a>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </ScrollArea>
         </TabsContent>
       </Tabs>
+
+      <SpecPreviewModal
+        projectId={projectId}
+        specId={selectedSpec?.id ?? null}
+        filename={selectedSpec?.filename ?? ""}
+        open={selectedSpec !== null}
+        onClose={() => setSelectedSpec(null)}
+      />
     </aside>
   );
 }

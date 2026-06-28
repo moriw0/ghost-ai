@@ -13,8 +13,8 @@ const chatMessageSchema = z.object({
 const bodySchema = z.object({
   roomId: z.string().min(1),
   chatHistory: z.array(chatMessageSchema),
-  nodes: z.array(z.record(z.unknown())),
-  edges: z.array(z.record(z.unknown())),
+  nodes: z.array(z.record(z.string(), z.unknown())),
+  edges: z.array(z.record(z.string(), z.unknown())),
 });
 
 export async function POST(request: Request): Promise<Response> {
@@ -47,13 +47,14 @@ export async function POST(request: Request): Promise<Response> {
     return Response.json({ error: "Project not found" }, { status: 404 });
   }
 
-  const handle = await tasks.trigger<typeof generateSpecTask>("generate-spec", {
+  const payload = {
     projectId: project.id,
     roomId,
     chatHistory,
     nodes,
     edges,
-  });
+  } as unknown as Parameters<(typeof generateSpecTask)["trigger"]>[0];
+  const handle = await tasks.trigger<typeof generateSpecTask>("generate-spec", payload);
 
   await prisma.taskRun.create({
     data: {

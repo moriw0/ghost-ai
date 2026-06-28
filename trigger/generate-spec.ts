@@ -1,7 +1,9 @@
 import { schemaTask, metadata, logger } from "@trigger.dev/sdk";
 import { generateText } from "ai";
 import { openai } from "@ai-sdk/openai";
+import { put } from "@vercel/blob";
 import { z } from "zod";
+import { prisma } from "@/lib/prisma";
 
 const chatMessageSchema = z.object({
   role: z.enum(["user", "assistant"]),
@@ -161,13 +163,32 @@ export const generateSpecTask = schemaTask({
       throw err;
     }
 
+    metadata.set("status", "persisting").set("progress", 80);
+
+    const specId = crypto.randomUUID();
+
+    const blob = await put(
+      `specs/${projectId}/${specId}.md`,
+      specContent,
+      { access: "private", contentType: "text/markdown", addRandomSuffix: false, allowOverwrite: false }
+    );
+
+    await prisma.projectSpec.create({
+      data: {
+        id: specId,
+        projectId,
+        filePath: blob.url,
+      },
+    });
+
     metadata.set("status", "complete").set("progress", 100);
 
     logger.info("Spec generation complete", {
       projectId,
+      specId,
       specLength: specContent.length,
     });
 
-    return { specContent };
+    return { specContent, specId };
   },
 });
