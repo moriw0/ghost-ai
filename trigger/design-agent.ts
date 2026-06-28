@@ -1,6 +1,6 @@
 import { task, logger } from "@trigger.dev/sdk";
 import { generateObject } from "ai";
-import { google } from "@ai-sdk/google";
+import { openai } from "@ai-sdk/openai";
 import { z } from "zod";
 import { mutateFlow } from "@liveblocks/react-flow/node";
 import { getLiveblocks } from "@/lib/liveblocks";
@@ -28,20 +28,20 @@ const nodeOutputSchema = z.object({
 
 const nodeUpdateSchema = z.object({
   id: z.string(),
-  label: z.string().optional(),
-  shape: z.enum(["rectangle", "diamond", "circle", "pill", "cylinder", "hexagon"]).optional(),
-  colorIndex: z.number().int().min(0).max(7).optional(),
-  x: z.number().optional(),
-  y: z.number().optional(),
-  width: z.number().optional(),
-  height: z.number().optional(),
+  label: z.string().nullable(),
+  shape: z.enum(["rectangle", "diamond", "circle", "pill", "cylinder", "hexagon"]).nullable(),
+  colorIndex: z.number().int().min(0).max(7).nullable(),
+  x: z.number().nullable(),
+  y: z.number().nullable(),
+  width: z.number().nullable(),
+  height: z.number().nullable(),
 });
 
 const edgeOutputSchema = z.object({
   id: z.string(),
   source: z.string(),
   target: z.string(),
-  label: z.string().optional(),
+  label: z.string().nullable(),
 });
 
 const designOutputSchema = z.object({
@@ -153,7 +153,7 @@ async function applyDesign(
         if (!existing) continue;
 
         const updatedPosition =
-          u.x !== undefined || u.y !== undefined
+          u.x !== null || u.y !== null
             ? {
                 x: u.x ?? existing.position.x,
                 y: u.y ?? existing.position.y,
@@ -165,9 +165,9 @@ async function applyDesign(
         }
 
         const dataUpdate: Partial<{ label: string; color: string; shape: string }> = {};
-        if (u.label !== undefined) dataUpdate.label = u.label;
-        if (u.shape !== undefined) dataUpdate.shape = u.shape;
-        if (u.colorIndex !== undefined) {
+        if (u.label !== null) dataUpdate.label = u.label;
+        if (u.shape !== null) dataUpdate.shape = u.shape;
+        if (u.colorIndex !== null) {
           const newColor = NODE_COLORS[u.colorIndex]?.fill;
           if (newColor) dataUpdate.color = newColor;
         }
@@ -176,7 +176,7 @@ async function applyDesign(
           flow.updateNodeData(u.id, dataUpdate);
         }
 
-        if (u.width !== undefined || u.height !== undefined) {
+        if (u.width !== null || u.height !== null) {
           flow.updateNode(u.id, {
             width: u.width ?? existing.width,
             height: u.height ?? existing.height,
@@ -190,7 +190,7 @@ async function applyDesign(
           type: "canvasEdge",
           source: e.source,
           target: e.target,
-          data: e.label ? { label: e.label } : {},
+          data: e.label !== null ? { label: e.label } : {},
         });
       }
     }
@@ -231,7 +231,7 @@ export const designAgentTask = task({
     let design: DesignOutput;
     try {
       const { object } = await generateObject({
-        model: google("gemini-2.0-flash"),
+        model: openai("gpt-4o-mini"),
         schema: designOutputSchema,
         system: buildSystemPrompt(existingNodes, existingEdges),
         prompt,
