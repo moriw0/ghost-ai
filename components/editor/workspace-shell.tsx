@@ -63,6 +63,7 @@ export function WorkspaceShell({
           }),
           aiStatusFeed: new LiveObject({ text: null }),
           aiChatFeed: new LiveList([]),
+          aiArchitectFeed: new LiveList([]),
         })}
       >
     <div className="flex h-screen flex-col bg-[var(--bg-base)]">

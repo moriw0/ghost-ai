@@ -14,6 +14,7 @@ declare global {
       flow: LiveblocksFlow<CanvasNode, CanvasEdge>;
       aiStatusFeed: LiveObject<{ text: string | null }>;
       aiChatFeed: LiveList<LiveObject<ChatMessage>>;
+      aiArchitectFeed: LiveList<LiveObject<ChatMessage>>;
     };
 
     UserMeta: {

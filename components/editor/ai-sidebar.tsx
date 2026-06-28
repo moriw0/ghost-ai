@@ -13,10 +13,8 @@ import { Textarea } from "@/components/ui/textarea";
 import { aiStatusMessageSchema, chatMessageSchema } from "@/types/tasks";
 import type { ChatMessage } from "@/types/tasks";
 
-interface Message {
-  role: "user" | "assistant";
-  content: string;
-}
+const GREEN_ACCENT = "#62C073";
+const GREEN_ACCENT_TEXT = "#0F2E18";
 
 function formatTime(ts: number): string {
   return new Date(ts).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
@@ -81,7 +79,6 @@ function RunTracker({
 }
 
 export function AiSidebar({ isOpen, onClose, projectId, roomId }: AiSidebarProps) {
-  const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [runState, setRunState] = useState<RunState | null>(null);
@@ -106,6 +103,16 @@ export function AiSidebar({ isOpen, onClose, projectId, roomId }: AiSidebarProps
   })();
   const isSharedProcessing = isAiThinking || sharedStatusText !== null;
 
+  const rawArchitectMessages = useStorage((root) => root.aiArchitectFeed);
+  const architectMessages: ChatMessage[] = rawArchitectMessages
+    ? (rawArchitectMessages as unknown as Record<string, unknown>[])
+        .map((m) => {
+          const result = chatMessageSchema.safeParse(m);
+          return result.success ? result.data : null;
+        })
+        .filter((m): m is ChatMessage => m !== null)
+    : [];
+
   const rawChatMessages = useStorage((root) => root.aiChatFeed);
   const chatMessages: ChatMessage[] = rawChatMessages
     ? (rawChatMessages as unknown as Record<string, unknown>[])
@@ -115,6 +122,22 @@ export function AiSidebar({ isOpen, onClose, projectId, roomId }: AiSidebarProps
         })
         .filter((m): m is ChatMessage => m !== null)
     : [];
+
+  const pushArchitectMessage = useMutation(
+    ({ storage }, content: string, sender: string, role: "user" | "assistant") => {
+      const id = `arch-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
+      storage.get("aiArchitectFeed").push(
+        new LiveObject({
+          id,
+          sender,
+          role,
+          content,
+          timestamp: Date.now(),
+        })
+      );
+    },
+    []
+  );
 
   const sendChatMutation = useMutation(
     ({ storage }, content: string, sender: string) => {
@@ -141,7 +164,7 @@ export function AiSidebar({ isOpen, onClose, projectId, roomId }: AiSidebarProps
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages]);
+  }, [architectMessages.length]);
 
   useEffect(() => {
     const el = chatInputRef.current;
@@ -158,56 +181,40 @@ export function AiSidebar({ isOpen, onClose, projectId, roomId }: AiSidebarProps
     const trimmed = text.trim();
     if (!trimmed || isSubmitting || runState) return;
 
-    setMessages((prev) => [...prev, { role: "user", content: trimmed }]);
+    const senderName = self?.info?.name ?? "You";
+    pushArchitectMessage(trimmed, senderName, "user");
     setInput("");
     setIsSubmitting(true);
 
     try {
-      const triggerRes = await fetch("/api/ai/design", {
+      const res = await fetch("/api/ai/design", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ prompt: trimmed, roomId, projectId }),
       });
 
-      if (!triggerRes.ok) {
-        throw new Error("Failed to start AI task");
-      }
+      if (!res.ok) throw new Error("Failed to start AI task");
 
-      const { runId } = (await triggerRes.json()) as { runId: string };
+      const { runId, publicToken } = (await res.json()) as {
+        runId: string;
+        publicToken: string;
+      };
 
-      const tokenRes = await fetch("/api/ai/design/token", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ runId }),
-      });
-
-      if (!tokenRes.ok) {
-        throw new Error("Failed to get run token");
-      }
-
-      const { token } = (await tokenRes.json()) as { token: string };
-
-      setRunState({ runId, accessToken: token });
+      setRunState({ runId, accessToken: publicToken });
     } catch {
-      setMessages((prev) => [
-        ...prev,
-        { role: "assistant", content: "Something went wrong. Please try again." },
-      ]);
+      pushArchitectMessage("Something went wrong. Please try again.", "Ghost AI", "assistant");
       setIsSubmitting(false);
     }
   }
 
   function handleRunComplete(summary: string) {
-    setMessages((prev) => [...prev, { role: "assistant", content: summary }]);
+    pushArchitectMessage(summary, "Ghost AI", "assistant");
     setRunState(null);
     setIsSubmitting(false);
   }
 
   function handleRunError() {
-    setMessages((prev) => [
-      ...prev,
-      { role: "assistant", content: "The design task failed. Please try again." },
-    ]);
+    pushArchitectMessage("The design task failed. Please try again.", "Ghost AI", "assistant");
     setRunState(null);
     setIsSubmitting(false);
   }
@@ -240,6 +247,7 @@ export function AiSidebar({ isOpen, onClose, projectId, roomId }: AiSidebarProps
   }
 
   const isProcessing = isSubmitting || runState !== null || isSharedProcessing;
+  const isRunActive = runState !== null || isAiThinking;
 
   return (
     <aside
@@ -318,7 +326,7 @@ export function AiSidebar({ isOpen, onClose, projectId, roomId }: AiSidebarProps
           className="mt-0 flex min-h-0 flex-1 flex-col overflow-hidden"
         >
           <ScrollArea className="min-h-0 flex-1 px-4 py-3">
-            {messages.length === 0 ? (
+            {architectMessages.length === 0 ? (
               <div className="flex flex-col items-center gap-4 pt-8 text-center">
                 <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-[var(--bg-subtle)]">
                   <Bot className="h-6 w-6 text-[var(--accent-ai-text)]" />
@@ -347,9 +355,9 @@ export function AiSidebar({ isOpen, onClose, projectId, roomId }: AiSidebarProps
               </div>
             ) : (
               <div className="flex flex-col gap-3">
-                {messages.map((msg, i) => (
+                {architectMessages.map((msg) => (
                   <div
-                    key={i}
+                    key={msg.id}
                     className={`flex ${
                       msg.role === "user" ? "justify-end" : "justify-start"
                     }`}
@@ -357,9 +365,14 @@ export function AiSidebar({ isOpen, onClose, projectId, roomId }: AiSidebarProps
                     <div
                       className={`max-w-[85%] rounded-2xl px-3 py-2 text-sm ${
                         msg.role === "user"
-                          ? "border-2 border-[var(--accent-primary)]/50 bg-[var(--accent-primary-dim)] text-[var(--text-primary)]"
-                          : "border border-[var(--border-default)] bg-[var(--bg-elevated)] text-[var(--accent-ai-text)]"
+                          ? ""
+                          : "border border-[var(--border-default)] bg-[var(--bg-elevated)] text-[var(--text-primary)]"
                       }`}
+                      style={
+                        msg.role === "user"
+                          ? { backgroundColor: GREEN_ACCENT, color: GREEN_ACCENT_TEXT }
+                          : undefined
+                      }
                     >
                       {msg.content}
                     </div>
@@ -367,8 +380,8 @@ export function AiSidebar({ isOpen, onClose, projectId, roomId }: AiSidebarProps
                 ))}
                 {isProcessing && (
                   <div className="flex justify-start">
-                    <div className="flex items-center gap-2 rounded-2xl border border-[var(--border-default)] bg-[var(--bg-elevated)] px-3 py-2 text-sm text-[var(--accent-ai-text)]">
-                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                    <div className="flex items-center gap-2 rounded-2xl border border-[var(--border-default)] bg-[var(--bg-elevated)] px-3 py-2 text-sm text-[var(--text-primary)]">
+                      <Loader2 className="h-3.5 w-3.5 animate-spin" style={{ color: GREEN_ACCENT }} />
                       Designing...
                     </div>
                   </div>
@@ -377,6 +390,19 @@ export function AiSidebar({ isOpen, onClose, projectId, roomId }: AiSidebarProps
               </div>
             )}
           </ScrollArea>
+
+          {/* Status strip — visible only while a run is active */}
+          {isRunActive && (
+            <div className="shrink-0 flex items-center gap-2 border-t border-[var(--border-default)] bg-[var(--bg-elevated)] px-3 py-2">
+              <Loader2
+                className="h-3 w-3 shrink-0 animate-spin"
+                style={{ color: GREEN_ACCENT }}
+              />
+              <span className="truncate text-xs" style={{ color: GREEN_ACCENT }}>
+                {sharedStatusText ?? "Ghost AI is working..."}
+              </span>
+            </div>
+          )}
 
           {/* Input */}
           <div className="shrink-0 border-t border-[var(--border-default)] p-3">
@@ -395,7 +421,11 @@ export function AiSidebar({ isOpen, onClose, projectId, roomId }: AiSidebarProps
                 onClick={() => submit(input)}
                 disabled={!input.trim() || isProcessing}
                 size="icon"
-                className="shrink-0 bg-[var(--accent-primary)] text-[#080809] hover:bg-[var(--accent-primary)]/90 disabled:opacity-40"
+                className="shrink-0 disabled:opacity-40"
+                style={{
+                  backgroundColor: GREEN_ACCENT,
+                  color: GREEN_ACCENT_TEXT,
+                }}
               >
                 {isProcessing ? (
                   <Loader2 className="h-4 w-4 animate-spin" />
