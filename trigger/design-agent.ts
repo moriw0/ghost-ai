@@ -68,6 +68,16 @@ async function setAiPresence(roomId: string, thinking: boolean) {
   }
 }
 
+async function updateAiFeed(roomId: string, text: string | null) {
+  try {
+    await getLiveblocks().mutateStorage(roomId, ({ root }) => {
+      root.get("aiStatusFeed").set("text", text);
+    });
+  } catch (err) {
+    logger.warn("Failed to update AI feed", { err });
+  }
+}
+
 async function broadcastStatus(
   roomId: string,
   phase: "start" | "thinking" | "writing" | "complete" | "error",
@@ -78,6 +88,8 @@ async function broadcastStatus(
   } catch (err) {
     logger.warn("Failed to broadcast AI status", { err });
   }
+  const feedText = phase === "complete" || phase === "error" ? null : message;
+  await updateAiFeed(roomId, feedText);
 }
 
 function buildSystemPrompt(existingNodes: CanvasNode[], existingEdges: CanvasEdge[]): string {

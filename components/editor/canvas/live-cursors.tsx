@@ -2,6 +2,7 @@
 
 import { useOthers } from "@liveblocks/react";
 import { ViewportPortal } from "@xyflow/react";
+import { Loader2 } from "lucide-react";
 
 export function LiveCursors() {
   const others = useOthers();
@@ -24,9 +25,12 @@ export function LiveCursors() {
           >
             <CursorPointer color={other.info.color} />
             <div
-              className="absolute left-3 top-4 whitespace-nowrap rounded-md px-1.5 py-0.5 text-xs font-medium text-white"
+              className="absolute left-3 top-4 flex items-center gap-1 whitespace-nowrap rounded-md px-1.5 py-0.5 text-xs font-medium text-white"
               style={{ backgroundColor: other.info.color }}
             >
+              {other.presence.thinking && (
+                <Loader2 className="h-2.5 w-2.5 animate-spin shrink-0" />
+              )}
               {other.info.name}
             </div>
           </div>

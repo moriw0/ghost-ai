@@ -1,17 +1,25 @@
 "use client";
 
-import { Bot, Download, FileText, Loader2, Send, X } from "lucide-react";
+import { Bot, Download, FileText, Loader2, MessageSquare, Send, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { useRealtimeRun } from "@trigger.dev/react-hooks";
+import { useMutation, useOthers, useSelf, useStorage } from "@liveblocks/react";
+import { LiveObject } from "@liveblocks/client";
 
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
+import { aiStatusMessageSchema, chatMessageSchema } from "@/types/tasks";
+import type { ChatMessage } from "@/types/tasks";
 
 interface Message {
   role: "user" | "assistant";
   content: string;
+}
+
+function formatTime(ts: number): string {
+  return new Date(ts).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 }
 
 const STARTER_PROMPTS = [
@@ -80,6 +88,50 @@ export function AiSidebar({ isOpen, onClose, projectId, roomId }: AiSidebarProps
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
 
+  const [chatInput, setChatInput] = useState("");
+  const [chatError, setChatError] = useState<string | null>(null);
+  const chatInputRef = useRef<HTMLTextAreaElement>(null);
+  const chatBottomRef = useRef<HTMLDivElement>(null);
+
+  const self = useSelf();
+  const others = useOthers();
+  const isAiThinking = others.some(
+    (other) => other.id === "ghost-ai" && other.presence.thinking
+  );
+  const rawFeed = useStorage((root) => root.aiStatusFeed);
+  const sharedStatusText = (() => {
+    if (!rawFeed) return null;
+    const result = aiStatusMessageSchema.safeParse({ text: rawFeed.text ?? undefined });
+    return result.success ? (result.data.text ?? null) : null;
+  })();
+  const isSharedProcessing = isAiThinking || sharedStatusText !== null;
+
+  const rawChatMessages = useStorage((root) => root.aiChatFeed);
+  const chatMessages: ChatMessage[] = rawChatMessages
+    ? (rawChatMessages as unknown as Record<string, unknown>[])
+        .map((m) => {
+          const result = chatMessageSchema.safeParse(m);
+          return result.success ? result.data : null;
+        })
+        .filter((m): m is ChatMessage => m !== null)
+    : [];
+
+  const sendChatMutation = useMutation(
+    ({ storage }, content: string, sender: string) => {
+      const id = `chat-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
+      storage.get("aiChatFeed").push(
+        new LiveObject({
+          id,
+          sender,
+          role: "user" as const,
+          content,
+          timestamp: Date.now(),
+        })
+      );
+    },
+    []
+  );
+
   useEffect(() => {
     const el = textareaRef.current;
     if (!el) return;
@@ -90,6 +142,17 @@ export function AiSidebar({ isOpen, onClose, projectId, roomId }: AiSidebarProps
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
+
+  useEffect(() => {
+    const el = chatInputRef.current;
+    if (!el) return;
+    el.style.height = "72px";
+    el.style.height = `${Math.min(el.scrollHeight, 160)}px`;
+  }, [chatInput]);
+
+  useEffect(() => {
+    chatBottomRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [chatMessages.length]);
 
   async function submit(text: string) {
     const trimmed = text.trim();
@@ -156,7 +219,27 @@ export function AiSidebar({ isOpen, onClose, projectId, roomId }: AiSidebarProps
     }
   }
 
-  const isProcessing = isSubmitting || runState !== null;
+  function sendChat() {
+    const trimmed = chatInput.trim();
+    if (!trimmed) return;
+    const sender = self?.info?.name ?? "Anonymous";
+    try {
+      sendChatMutation(trimmed, sender);
+      setChatInput("");
+      setChatError(null);
+    } catch {
+      setChatError("Failed to send message. Please try again.");
+    }
+  }
+
+  function handleChatKeyDown(e: React.KeyboardEvent<HTMLTextAreaElement>) {
+    if (e.key === "Enter" && !e.shiftKey) {
+      e.preventDefault();
+      sendChat();
+    }
+  }
+
+  const isProcessing = isSubmitting || runState !== null || isSharedProcessing;
 
   return (
     <aside
@@ -183,9 +266,16 @@ export function AiSidebar({ isOpen, onClose, projectId, roomId }: AiSidebarProps
           <p className="text-sm font-semibold text-[var(--text-primary)]">
             AI Workspace
           </p>
-          <p className="text-xs text-[var(--text-muted)]">
-            {isProcessing ? "Ghost AI is working..." : "Collaborate with Ghost AI"}
-          </p>
+          {isSharedProcessing ? (
+            <div className="flex items-center gap-1.5">
+              <Loader2 className="h-3 w-3 animate-spin text-[var(--accent-ai-text)]" />
+              <p className="truncate text-xs text-[var(--accent-ai-text)]">
+                {sharedStatusText ?? "Ghost AI is working..."}
+              </p>
+            </div>
+          ) : (
+            <p className="text-xs text-[var(--text-muted)]">Collaborate with Ghost AI</p>
+          )}
         </div>
         <button
           onClick={onClose}
@@ -207,6 +297,12 @@ export function AiSidebar({ isOpen, onClose, projectId, roomId }: AiSidebarProps
             className="flex-1 text-xs data-[state=active]:bg-[var(--accent-ai)] data-[state=active]:text-white data-[state=inactive]:text-[var(--text-muted)]"
           >
             AI Architect
+          </TabsTrigger>
+          <TabsTrigger
+            value="chat"
+            className="flex-1 text-xs data-[state=active]:bg-[var(--accent-ai)] data-[state=active]:text-white data-[state=inactive]:text-[var(--text-muted)]"
+          >
+            Chat
           </TabsTrigger>
           <TabsTrigger
             value="specs"
@@ -306,6 +402,77 @@ export function AiSidebar({ isOpen, onClose, projectId, roomId }: AiSidebarProps
                 ) : (
                   <Send className="h-4 w-4" />
                 )}
+              </Button>
+            </div>
+            <p className="mt-1.5 text-xs text-[var(--text-faint)]">
+              Enter to send &middot; Shift+Enter for newline
+            </p>
+          </div>
+        </TabsContent>
+
+        {/* Chat tab */}
+        <TabsContent
+          value="chat"
+          className="mt-0 flex min-h-0 flex-1 flex-col overflow-hidden"
+        >
+          <ScrollArea className="min-h-0 flex-1 px-4 py-3">
+            {chatMessages.length === 0 ? (
+              <div className="flex flex-col items-center gap-3 pt-8 text-center">
+                <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-[var(--bg-subtle)]">
+                  <MessageSquare className="h-6 w-6 text-[var(--accent-ai-text)]" />
+                </div>
+                <div>
+                  <p className="text-sm font-medium text-[var(--text-primary)]">
+                    Room Chat
+                  </p>
+                  <p className="mt-1 text-xs leading-relaxed text-[var(--text-muted)]">
+                    Send messages to everyone in this room.
+                  </p>
+                </div>
+              </div>
+            ) : (
+              <div className="flex flex-col gap-3">
+                {chatMessages.map((msg) => (
+                  <div key={msg.id} className="flex flex-col gap-0.5">
+                    <div className="flex items-baseline justify-between">
+                      <span className="text-xs font-medium text-[var(--text-primary)]">
+                        {msg.sender}
+                      </span>
+                      <span className="text-[10px] text-[var(--text-faint)]">
+                        {formatTime(msg.timestamp)}
+                      </span>
+                    </div>
+                    <p className="rounded-2xl rounded-tl-sm border border-[var(--border-default)] bg-[var(--bg-elevated)] px-3 py-2 text-sm text-[var(--text-primary)]">
+                      {msg.content}
+                    </p>
+                  </div>
+                ))}
+                <div ref={chatBottomRef} />
+              </div>
+            )}
+          </ScrollArea>
+
+          <div className="shrink-0 border-t border-[var(--border-default)] p-3">
+            {chatError && (
+              <p className="mb-2 text-xs text-red-400">{chatError}</p>
+            )}
+            <div className="flex items-end gap-2">
+              <Textarea
+                ref={chatInputRef}
+                value={chatInput}
+                onChange={(e) => setChatInput(e.target.value)}
+                onKeyDown={handleChatKeyDown}
+                placeholder="Send a message..."
+                rows={1}
+                className="min-h-[72px] max-h-[160px] flex-1 resize-none border-[var(--border-default)] bg-[var(--bg-elevated)] text-sm text-[var(--text-primary)] placeholder:text-[var(--text-muted)] focus-visible:ring-[var(--accent-ai)]"
+              />
+              <Button
+                onClick={sendChat}
+                disabled={!chatInput.trim()}
+                size="icon"
+                className="shrink-0 bg-[var(--accent-primary)] text-[#080809] hover:bg-[var(--accent-primary)]/90 disabled:opacity-40"
+              >
+                <Send className="h-4 w-4" />
               </Button>
             </div>
             <p className="mt-1.5 text-xs text-[var(--text-faint)]">

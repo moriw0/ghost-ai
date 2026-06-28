@@ -3,6 +3,8 @@
 import { useState } from "react";
 import { Bot, LayoutTemplate, PanelLeftClose, PanelLeftOpen, Share2 } from "lucide-react";
 import { UserButton } from "@clerk/nextjs";
+import { LiveObject, LiveMap, LiveList } from "@liveblocks/client";
+import { LiveblocksProvider, RoomProvider } from "@liveblocks/react";
 
 import { AiSidebar } from "@/components/editor/ai-sidebar";
 import { CanvasWrapper } from "@/components/editor/canvas/canvas-wrapper";
@@ -50,6 +52,19 @@ export function WorkspaceShell({
   } = useProjectActions();
 
   return (
+    <LiveblocksProvider authEndpoint="/api/liveblocks-auth">
+      <RoomProvider
+        id={project.id}
+        initialPresence={{ cursor: null, thinking: false }}
+        initialStorage={() => ({
+          flow: new LiveObject({
+            nodes: new LiveMap(),
+            edges: new LiveMap(),
+          }),
+          aiStatusFeed: new LiveObject({ text: null }),
+          aiChatFeed: new LiveList([]),
+        })}
+      >
     <div className="flex h-screen flex-col bg-[var(--bg-base)]">
       <header className="fixed left-0 right-0 top-0 z-40 flex h-12 items-center border-b border-[var(--border-default)] bg-[var(--bg-surface)]">
         <div className="flex w-full items-center gap-3 px-3">
@@ -120,7 +135,6 @@ export function WorkspaceShell({
       <div className="flex flex-1 pt-12">
         <main className="relative flex flex-1 bg-[var(--bg-base)]">
           <CanvasWrapper
-            roomId={project.id}
             projectId={project.id}
             templatesOpen={templatesOpen}
             onTemplatesClose={() => setTemplatesOpen(false)}
@@ -167,5 +181,7 @@ export function WorkspaceShell({
         onClose={closeDialog}
       />
     </div>
+      </RoomProvider>
+    </LiveblocksProvider>
   );
 }
