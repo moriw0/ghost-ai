@@ -41,3 +41,11 @@ yarn-error.log*
 next-env.d.ts
 
 /app/generated/prisma
+
+# Claude Code
+.claude/
+skills-lock.json
+.agents/
+
+# Trigger.dev local dev state
+.trigger/

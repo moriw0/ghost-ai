@@ -128,7 +128,12 @@ export function WorkspaceShell({
         </main>
       </div>
 
-      <AiSidebar isOpen={aiSidebarOpen} onClose={() => setAiSidebarOpen(false)} />
+      <AiSidebar
+        isOpen={aiSidebarOpen}
+        onClose={() => setAiSidebarOpen(false)}
+        projectId={project.id}
+        roomId={project.id}
+      />
 
       <ShareDialog
         open={shareOpen}

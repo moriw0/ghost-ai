@@ -1,7 +1,8 @@
 "use client";
 
-import { Bot, Download, FileText, Send, X } from "lucide-react";
+import { Bot, Download, FileText, Loader2, Send, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
+import { useRealtimeRun } from "@trigger.dev/react-hooks";
 
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -28,11 +29,54 @@ const DEMO_SPEC = {
 interface AiSidebarProps {
   isOpen: boolean;
   onClose: () => void;
+  projectId: string;
+  roomId: string;
 }
 
-export function AiSidebar({ isOpen, onClose }: AiSidebarProps) {
+interface RunState {
+  runId: string;
+  accessToken: string;
+}
+
+function RunTracker({
+  runId,
+  accessToken,
+  onComplete,
+  onError,
+}: {
+  runId: string;
+  accessToken: string;
+  onComplete: (summary: string) => void;
+  onError: () => void;
+}) {
+  const { run } = useRealtimeRun(runId, { accessToken });
+
+  useEffect(() => {
+    if (!run) return;
+    if (run.status === "COMPLETED") {
+      const output = run.output as { summary?: string } | undefined;
+      onComplete(output?.summary ?? "Design applied to canvas.");
+    } else if (
+      run.status === "FAILED" ||
+      run.status === "CANCELED" ||
+      run.status === "CRASHED" ||
+      run.status === "SYSTEM_FAILURE" ||
+      run.status === "TIMED_OUT" ||
+      run.status === "EXPIRED"
+    ) {
+      onError();
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [run?.status]);
+
+  return null;
+}
+
+export function AiSidebar({ isOpen, onClose, projectId, roomId }: AiSidebarProps) {
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [runState, setRunState] = useState<RunState | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
 
@@ -47,11 +91,62 @@ export function AiSidebar({ isOpen, onClose }: AiSidebarProps) {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
 
-  function submit(text: string) {
+  async function submit(text: string) {
     const trimmed = text.trim();
-    if (!trimmed) return;
+    if (!trimmed || isSubmitting || runState) return;
+
     setMessages((prev) => [...prev, { role: "user", content: trimmed }]);
     setInput("");
+    setIsSubmitting(true);
+
+    try {
+      const triggerRes = await fetch("/api/ai/design", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ prompt: trimmed, roomId, projectId }),
+      });
+
+      if (!triggerRes.ok) {
+        throw new Error("Failed to start AI task");
+      }
+
+      const { runId } = (await triggerRes.json()) as { runId: string };
+
+      const tokenRes = await fetch("/api/ai/design/token", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ runId }),
+      });
+
+      if (!tokenRes.ok) {
+        throw new Error("Failed to get run token");
+      }
+
+      const { token } = (await tokenRes.json()) as { token: string };
+
+      setRunState({ runId, accessToken: token });
+    } catch {
+      setMessages((prev) => [
+        ...prev,
+        { role: "assistant", content: "Something went wrong. Please try again." },
+      ]);
+      setIsSubmitting(false);
+    }
+  }
+
+  function handleRunComplete(summary: string) {
+    setMessages((prev) => [...prev, { role: "assistant", content: summary }]);
+    setRunState(null);
+    setIsSubmitting(false);
+  }
+
+  function handleRunError() {
+    setMessages((prev) => [
+      ...prev,
+      { role: "assistant", content: "The design task failed. Please try again." },
+    ]);
+    setRunState(null);
+    setIsSubmitting(false);
   }
 
   function handleKeyDown(e: React.KeyboardEvent<HTMLTextAreaElement>) {
@@ -60,6 +155,8 @@ export function AiSidebar({ isOpen, onClose }: AiSidebarProps) {
       submit(input);
     }
   }
+
+  const isProcessing = isSubmitting || runState !== null;
 
   return (
     <aside
@@ -70,6 +167,15 @@ export function AiSidebar({ isOpen, onClose }: AiSidebarProps) {
         isOpen ? "translate-x-0" : "translate-x-full"
       }`}
     >
+      {runState && (
+        <RunTracker
+          runId={runState.runId}
+          accessToken={runState.accessToken}
+          onComplete={handleRunComplete}
+          onError={handleRunError}
+        />
+      )}
+
       {/* Header */}
       <div className="flex shrink-0 items-center gap-2.5 border-b border-[var(--border-default)] px-4 py-3">
         <Bot className="h-4 w-4 shrink-0 text-[var(--accent-ai-text)]" />
@@ -78,7 +184,7 @@ export function AiSidebar({ isOpen, onClose }: AiSidebarProps) {
             AI Workspace
           </p>
           <p className="text-xs text-[var(--text-muted)]">
-            Collaborate with Ghost AI
+            {isProcessing ? "Ghost AI is working..." : "Collaborate with Ghost AI"}
           </p>
         </div>
         <button
@@ -135,7 +241,8 @@ export function AiSidebar({ isOpen, onClose }: AiSidebarProps) {
                     <button
                       key={prompt}
                       onClick={() => submit(prompt)}
-                      className="rounded-full bg-[var(--bg-subtle)] px-3 py-2 text-left text-xs text-[var(--accent-ai-text)] transition-colors hover:bg-[var(--bg-elevated)]"
+                      disabled={isProcessing}
+                      className="rounded-full bg-[var(--bg-subtle)] px-3 py-2 text-left text-xs text-[var(--accent-ai-text)] transition-colors hover:bg-[var(--bg-elevated)] disabled:cursor-not-allowed disabled:opacity-50"
                     >
                       {prompt}
                     </button>
@@ -162,6 +269,14 @@ export function AiSidebar({ isOpen, onClose }: AiSidebarProps) {
                     </div>
                   </div>
                 ))}
+                {isProcessing && (
+                  <div className="flex justify-start">
+                    <div className="flex items-center gap-2 rounded-2xl border border-[var(--border-default)] bg-[var(--bg-elevated)] px-3 py-2 text-sm text-[var(--accent-ai-text)]">
+                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                      Designing...
+                    </div>
+                  </div>
+                )}
                 <div ref={bottomRef} />
               </div>
             )}
@@ -177,15 +292,20 @@ export function AiSidebar({ isOpen, onClose }: AiSidebarProps) {
                 onKeyDown={handleKeyDown}
                 placeholder="Ask Ghost AI..."
                 rows={1}
-                className="min-h-[72px] max-h-[160px] flex-1 resize-none border-[var(--border-default)] bg-[var(--bg-elevated)] text-sm text-[var(--text-primary)] placeholder:text-[var(--text-muted)] focus-visible:ring-[var(--accent-ai)]"
+                disabled={isProcessing}
+                className="min-h-[72px] max-h-[160px] flex-1 resize-none border-[var(--border-default)] bg-[var(--bg-elevated)] text-sm text-[var(--text-primary)] placeholder:text-[var(--text-muted)] focus-visible:ring-[var(--accent-ai)] disabled:opacity-50"
               />
               <Button
                 onClick={() => submit(input)}
-                disabled={!input.trim()}
+                disabled={!input.trim() || isProcessing}
                 size="icon"
                 className="shrink-0 bg-[var(--accent-primary)] text-[#080809] hover:bg-[var(--accent-primary)]/90 disabled:opacity-40"
               >
-                <Send className="h-4 w-4" />
+                {isProcessing ? (
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                ) : (
+                  <Send className="h-4 w-4" />
+                )}
               </Button>
             </div>
             <p className="mt-1.5 text-xs text-[var(--text-faint)]">

@@ -13,7 +13,7 @@ import {
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 import { useLiveblocksFlow } from "@liveblocks/react-flow";
-import { useMutation, useUndo, useRedo, useUpdateMyPresence } from "@liveblocks/react";
+import { useMutation, useUndo, useRedo, useUpdateMyPresence, useEventListener } from "@liveblocks/react";
 import { LiveObject } from "@liveblocks/client";
 import type { CanvasNode, CanvasEdge } from "@/types/canvas";
 import { DEFAULT_NODE_COLOR } from "@/types/canvas";
@@ -86,6 +86,23 @@ interface FlowCanvasProps {
   onTemplatesClose: () => void;
 }
 
+function AiStatusBanner({ message, phase }: { message: string; phase: string }) {
+  const isError = phase === "error";
+  const isComplete = phase === "complete";
+  const color = isError
+    ? "border-red-500/30 bg-red-900/20 text-red-300"
+    : isComplete
+    ? "border-[var(--accent-ai)]/30 bg-[var(--accent-ai)]/10 text-[var(--accent-ai-text)]"
+    : "border-[var(--accent-ai)]/30 bg-[var(--accent-ai)]/10 text-[var(--accent-ai-text)]";
+  return (
+    <div
+      className={`pointer-events-none rounded-full border px-3 py-1 text-xs font-medium backdrop-blur-sm ${color}`}
+    >
+      {isComplete || isError ? message : `${message}`}
+    </div>
+  );
+}
+
 export function FlowCanvas({ projectId, templatesOpen, onTemplatesClose }: FlowCanvasProps) {
   const { nodes, edges, onNodesChange, onEdgesChange, onDelete } =
     useLiveblocksFlow<CanvasNode, CanvasEdge>({ suspense: true });
@@ -99,6 +116,18 @@ export function FlowCanvas({ projectId, templatesOpen, onTemplatesClose }: FlowC
   const undo = useUndo();
   const redo = useRedo();
   const updateMyPresence = useUpdateMyPresence();
+
+  const [aiStatus, setAiStatus] = useState<{ message: string; phase: string } | null>(null);
+  const aiStatusTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEventListener(({ event }) => {
+    if (event.type !== "ai-status") return;
+    setAiStatus({ message: event.message, phase: event.phase });
+    if (aiStatusTimerRef.current) clearTimeout(aiStatusTimerRef.current);
+    if (event.phase === "complete" || event.phase === "error") {
+      aiStatusTimerRef.current = setTimeout(() => setAiStatus(null), 4000);
+    }
+  });
 
   const addCanvasNode = useMutation(
     (
@@ -393,7 +422,12 @@ export function FlowCanvas({ projectId, templatesOpen, onTemplatesClose }: FlowC
           <PresenceAvatars />
         </Panel>
         <Panel position="top-left">
-          <SaveStatusIndicator status={saveStatus} />
+          <div className="flex flex-col items-start gap-1.5">
+            <SaveStatusIndicator status={saveStatus} />
+            {aiStatus && (
+              <AiStatusBanner message={aiStatus.message} phase={aiStatus.phase} />
+            )}
+          </div>
         </Panel>
         <LiveCursors />
         <MiniMap />

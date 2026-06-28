@@ -21,7 +21,11 @@ declare global {
       };
     };
 
-    RoomEvent: {};
+    RoomEvent: {
+      type: "ai-status";
+      message: string;
+      phase: "start" | "thinking" | "writing" | "complete" | "error";
+    };
 
     ThreadMetadata: {};
 
