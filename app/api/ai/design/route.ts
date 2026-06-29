@@ -7,7 +7,6 @@ import type { designAgentTask } from "@/trigger/design-agent";
 
 const bodySchema = z.object({
   prompt: z.string().min(1),
-  roomId: z.string().min(1),
   projectId: z.string().min(1),
 });
 
@@ -29,7 +28,10 @@ export async function POST(request: Request): Promise<Response> {
     return Response.json({ error: "Invalid request body" }, { status: 400 });
   }
 
-  const { prompt, roomId, projectId } = parsed.data;
+  const { prompt, projectId } = parsed.data;
+  // Derive roomId from the server-verified projectId to prevent IDOR via caller-supplied roomId.
+  // In this app roomId === projectId (Liveblocks room is identified by the project UUID).
+  const roomId = projectId;
 
   const identity = await getCurrentIdentity();
   if (!identity) {
