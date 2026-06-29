@@ -1,16 +1,34 @@
 "use client";
 
-import { Bot, Download, FileText, Send, X } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { Bot, Download, FileText, Loader2, MessageSquare, Send, X } from "lucide-react";
+import { useCallback, useEffect, useState } from "react";
+import { useRef } from "react";
+import { useRealtimeRun } from "@trigger.dev/react-hooks";
+import { useMutation, useOthers, useSelf, useStorage } from "@liveblocks/react";
+import { LiveObject } from "@liveblocks/client";
 
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
+import { aiStatusMessageSchema, chatMessageSchema } from "@/types/tasks";
+import type { ChatMessage } from "@/types/tasks";
+import { SpecPreviewModal } from "@/components/editor/spec-preview-modal";
 
-interface Message {
-  role: "user" | "assistant";
-  content: string;
+const GREEN_ACCENT = "#62C073";
+const GREEN_ACCENT_TEXT = "#0F2E18";
+
+function formatTime(ts: number): string {
+  return new Date(ts).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+}
+
+function formatDate(iso: string): string {
+  return new Date(iso).toLocaleDateString([], {
+    month: "short",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
 }
 
 const STARTER_PROMPTS = [
@@ -19,22 +37,179 @@ const STARTER_PROMPTS = [
   "Build a CI/CD pipeline",
 ];
 
-const DEMO_SPEC = {
-  title: "Microservices Architecture",
-  snippet:
-    "API Gateway routes to Auth, Products, and Orders services backed by PostgreSQL and a Redis cache layer.",
-};
+interface SpecItem {
+  id: string;
+  createdAt: string;
+}
+
+interface SelectedSpec {
+  id: string;
+  filename: string;
+}
 
 interface AiSidebarProps {
   isOpen: boolean;
   onClose: () => void;
+  projectId: string;
+  roomId: string;
 }
 
-export function AiSidebar({ isOpen, onClose }: AiSidebarProps) {
-  const [messages, setMessages] = useState<Message[]>([]);
+interface RunState {
+  runId: string;
+  accessToken: string;
+}
+
+function RunTracker({
+  runId,
+  accessToken,
+  onComplete,
+  onError,
+}: {
+  runId: string;
+  accessToken: string;
+  onComplete: (summary: string) => void;
+  onError: () => void;
+}) {
+  const { run } = useRealtimeRun(runId, { accessToken });
+
+  useEffect(() => {
+    if (!run) return;
+    if (run.status === "COMPLETED") {
+      const output = run.output as { summary?: string } | undefined;
+      onComplete(output?.summary ?? "Design applied to canvas.");
+    } else if (
+      run.status === "FAILED" ||
+      run.status === "CANCELED" ||
+      run.status === "CRASHED" ||
+      run.status === "SYSTEM_FAILURE" ||
+      run.status === "TIMED_OUT" ||
+      run.status === "EXPIRED"
+    ) {
+      onError();
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [run?.status]);
+
+  return null;
+}
+
+function SpecRunTracker({
+  runId,
+  accessToken,
+  onComplete,
+  onError,
+}: {
+  runId: string;
+  accessToken: string;
+  onComplete: () => void;
+  onError: () => void;
+}) {
+  const { run } = useRealtimeRun(runId, { accessToken });
+
+  useEffect(() => {
+    if (!run) return;
+    if (run.status === "COMPLETED") {
+      onComplete();
+    } else if (
+      run.status === "FAILED" ||
+      run.status === "CANCELED" ||
+      run.status === "CRASHED" ||
+      run.status === "SYSTEM_FAILURE" ||
+      run.status === "TIMED_OUT" ||
+      run.status === "EXPIRED"
+    ) {
+      onError();
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [run?.status]);
+
+  return null;
+}
+
+export function AiSidebar({ isOpen, onClose, projectId, roomId }: AiSidebarProps) {
   const [input, setInput] = useState("");
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [runState, setRunState] = useState<RunState | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
+
+  const [chatInput, setChatInput] = useState("");
+  const [chatError, setChatError] = useState<string | null>(null);
+  const chatInputRef = useRef<HTMLTextAreaElement>(null);
+  const chatBottomRef = useRef<HTMLDivElement>(null);
+
+  const [specs, setSpecs] = useState<SpecItem[]>([]);
+  const [specsLoading, setSpecsLoading] = useState(false);
+  const [selectedSpec, setSelectedSpec] = useState<SelectedSpec | null>(null);
+  const [activeTab, setActiveTab] = useState("architect");
+  const [specRunState, setSpecRunState] = useState<RunState | null>(null);
+  const [isGeneratingSpec, setIsGeneratingSpec] = useState(false);
+  const [specGenError, setSpecGenError] = useState<string | null>(null);
+
+  const self = useSelf();
+  const others = useOthers();
+  const isAiThinking = others.some(
+    (other) => other.id === "ghost-ai" && other.presence.thinking
+  );
+  const rawFeed = useStorage((root) => root.aiStatusFeed);
+  const sharedStatusText = (() => {
+    if (!rawFeed) return null;
+    const result = aiStatusMessageSchema.safeParse({ text: rawFeed.text ?? undefined });
+    return result.success ? (result.data.text ?? null) : null;
+  })();
+  const isSharedProcessing = isAiThinking || sharedStatusText !== null;
+
+  const rawArchitectMessages = useStorage((root) => root.aiArchitectFeed);
+  const architectMessages: ChatMessage[] = rawArchitectMessages
+    ? (rawArchitectMessages as unknown as Record<string, unknown>[])
+        .map((m) => {
+          const result = chatMessageSchema.safeParse(m);
+          return result.success ? result.data : null;
+        })
+        .filter((m): m is ChatMessage => m !== null)
+    : [];
+
+  const rawChatMessages = useStorage((root) => root.aiChatFeed);
+  const chatMessages: ChatMessage[] = rawChatMessages
+    ? (rawChatMessages as unknown as Record<string, unknown>[])
+        .map((m) => {
+          const result = chatMessageSchema.safeParse(m);
+          return result.success ? result.data : null;
+        })
+        .filter((m): m is ChatMessage => m !== null)
+    : [];
+
+  const pushArchitectMessage = useMutation(
+    ({ storage }, content: string, sender: string, role: "user" | "assistant") => {
+      const id = `arch-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
+      storage.get("aiArchitectFeed").push(
+        new LiveObject({
+          id,
+          sender,
+          role,
+          content,
+          timestamp: Date.now(),
+        })
+      );
+    },
+    []
+  );
+
+  const sendChatMutation = useMutation(
+    ({ storage }, content: string, sender: string) => {
+      const id = `chat-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
+      storage.get("aiChatFeed").push(
+        new LiveObject({
+          id,
+          sender,
+          role: "user" as const,
+          content,
+          timestamp: Date.now(),
+        })
+      );
+    },
+    []
+  );
 
   useEffect(() => {
     const el = textareaRef.current;
@@ -45,13 +220,63 @@ export function AiSidebar({ isOpen, onClose }: AiSidebarProps) {
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages]);
+  }, [architectMessages.length]);
 
-  function submit(text: string) {
+  useEffect(() => {
+    const el = chatInputRef.current;
+    if (!el) return;
+    el.style.height = "72px";
+    el.style.height = `${Math.min(el.scrollHeight, 160)}px`;
+  }, [chatInput]);
+
+  useEffect(() => {
+    chatBottomRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [chatMessages.length]);
+
+  async function submit(text: string) {
     const trimmed = text.trim();
-    if (!trimmed) return;
-    setMessages((prev) => [...prev, { role: "user", content: trimmed }]);
+    if (!trimmed || isSubmitting || runState) return;
+
+    const senderName = self?.info?.name ?? "You";
+    pushArchitectMessage(trimmed, senderName, "user");
     setInput("");
+    setIsSubmitting(true);
+
+    try {
+      const res = await fetch("/api/ai/design", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          prompt: trimmed,
+          projectId,
+          requestId: crypto.randomUUID(),
+        }),
+      });
+
+      if (!res.ok) throw new Error("Failed to start AI task");
+
+      const { runId, publicToken } = (await res.json()) as {
+        runId: string;
+        publicToken: string;
+      };
+
+      setRunState({ runId, accessToken: publicToken });
+    } catch {
+      pushArchitectMessage("Something went wrong. Please try again.", "Ghost AI", "assistant");
+      setIsSubmitting(false);
+    }
+  }
+
+  function handleRunComplete(summary: string) {
+    pushArchitectMessage(summary, "Ghost AI", "assistant");
+    setRunState(null);
+    setIsSubmitting(false);
+  }
+
+  function handleRunError() {
+    pushArchitectMessage("The design task failed. Please try again.", "Ghost AI", "assistant");
+    setRunState(null);
+    setIsSubmitting(false);
   }
 
   function handleKeyDown(e: React.KeyboardEvent<HTMLTextAreaElement>) {
@@ -60,6 +285,93 @@ export function AiSidebar({ isOpen, onClose }: AiSidebarProps) {
       submit(input);
     }
   }
+
+  function sendChat() {
+    const trimmed = chatInput.trim();
+    if (!trimmed) return;
+    const sender = self?.info?.name ?? "Anonymous";
+    try {
+      sendChatMutation(trimmed, sender);
+      setChatInput("");
+      setChatError(null);
+    } catch {
+      setChatError("Failed to send message. Please try again.");
+    }
+  }
+
+  function handleChatKeyDown(e: React.KeyboardEvent<HTMLTextAreaElement>) {
+    if (e.key === "Enter" && !e.shiftKey) {
+      e.preventDefault();
+      sendChat();
+    }
+  }
+
+  const fetchSpecs = useCallback(async () => {
+    setSpecsLoading(true);
+    try {
+      const res = await fetch(`/api/projects/${projectId}/specs`);
+      if (!res.ok) throw new Error("Failed");
+      const data = (await res.json()) as { specs: SpecItem[] };
+      setSpecs(data.specs);
+    } catch {
+      // silently fail — user can switch tabs to retry
+    } finally {
+      setSpecsLoading(false);
+    }
+  }, [projectId]);
+
+  useEffect(() => {
+    if (activeTab === "specs") {
+      fetchSpecs();
+    }
+  }, [activeTab, fetchSpecs]);
+
+  async function generateSpec() {
+    setIsGeneratingSpec(true);
+    setSpecGenError(null);
+    try {
+      const canvasRes = await fetch(`/api/projects/${projectId}/canvas`);
+      let nodes: unknown[] = [];
+      let edges: unknown[] = [];
+      if (canvasRes.ok) {
+        const canvas = (await canvasRes.json()) as { nodes?: unknown[]; edges?: unknown[] };
+        nodes = canvas.nodes ?? [];
+        edges = canvas.edges ?? [];
+      }
+
+      const chatHistory = architectMessages.map((m) => ({
+        role: m.role,
+        content: m.content,
+      }));
+
+      const specRes = await fetch("/api/ai/spec", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ roomId, chatHistory, nodes, edges }),
+      });
+
+      if (!specRes.ok) throw new Error("Failed to start spec generation");
+
+      const { runId } = (await specRes.json()) as { runId: string };
+
+      const tokenRes = await fetch("/api/ai/spec/token", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ runId }),
+      });
+
+      if (!tokenRes.ok) throw new Error("Failed to get tracking token");
+
+      const { token } = (await tokenRes.json()) as { token: string };
+      setSpecRunState({ runId, accessToken: token });
+    } catch {
+      setSpecGenError("Failed to start spec generation. Please try again.");
+      setIsGeneratingSpec(false);
+    }
+  }
+
+  const isProcessing = isSubmitting || runState !== null || isSharedProcessing;
+  const isRunActive = runState !== null || isAiThinking;
 
   return (
     <aside
@@ -70,6 +382,31 @@ export function AiSidebar({ isOpen, onClose }: AiSidebarProps) {
         isOpen ? "translate-x-0" : "translate-x-full"
       }`}
     >
+      {runState && (
+        <RunTracker
+          runId={runState.runId}
+          accessToken={runState.accessToken}
+          onComplete={handleRunComplete}
+          onError={handleRunError}
+        />
+      )}
+      {specRunState && (
+        <SpecRunTracker
+          runId={specRunState.runId}
+          accessToken={specRunState.accessToken}
+          onComplete={() => {
+            setSpecRunState(null);
+            setIsGeneratingSpec(false);
+            fetchSpecs();
+          }}
+          onError={() => {
+            setSpecRunState(null);
+            setIsGeneratingSpec(false);
+            setSpecGenError("Spec generation failed. Please try again.");
+          }}
+        />
+      )}
+
       {/* Header */}
       <div className="flex shrink-0 items-center gap-2.5 border-b border-[var(--border-default)] px-4 py-3">
         <Bot className="h-4 w-4 shrink-0 text-[var(--accent-ai-text)]" />
@@ -77,9 +414,16 @@ export function AiSidebar({ isOpen, onClose }: AiSidebarProps) {
           <p className="text-sm font-semibold text-[var(--text-primary)]">
             AI Workspace
           </p>
-          <p className="text-xs text-[var(--text-muted)]">
-            Collaborate with Ghost AI
-          </p>
+          {isSharedProcessing ? (
+            <div className="flex items-center gap-1.5">
+              <Loader2 className="h-3 w-3 animate-spin text-[var(--accent-ai-text)]" />
+              <p className="truncate text-xs text-[var(--accent-ai-text)]">
+                {sharedStatusText ?? "Ghost AI is working..."}
+              </p>
+            </div>
+          ) : (
+            <p className="text-xs text-[var(--text-muted)]">Collaborate with Ghost AI</p>
+          )}
         </div>
         <button
           onClick={onClose}
@@ -92,7 +436,8 @@ export function AiSidebar({ isOpen, onClose }: AiSidebarProps) {
 
       {/* Tabs */}
       <Tabs
-        defaultValue="architect"
+        value={activeTab}
+        onValueChange={setActiveTab}
         className="flex min-h-0 flex-1 flex-col overflow-hidden"
       >
         <TabsList className="mx-4 mt-3 shrink-0 gap-1 bg-[var(--bg-subtle)] p-1">
@@ -101,6 +446,12 @@ export function AiSidebar({ isOpen, onClose }: AiSidebarProps) {
             className="flex-1 text-xs data-[state=active]:bg-[var(--accent-ai)] data-[state=active]:text-white data-[state=inactive]:text-[var(--text-muted)]"
           >
             AI Architect
+          </TabsTrigger>
+          <TabsTrigger
+            value="chat"
+            className="flex-1 text-xs data-[state=active]:bg-[var(--accent-ai)] data-[state=active]:text-white data-[state=inactive]:text-[var(--text-muted)]"
+          >
+            Chat
           </TabsTrigger>
           <TabsTrigger
             value="specs"
@@ -116,7 +467,7 @@ export function AiSidebar({ isOpen, onClose }: AiSidebarProps) {
           className="mt-0 flex min-h-0 flex-1 flex-col overflow-hidden"
         >
           <ScrollArea className="min-h-0 flex-1 px-4 py-3">
-            {messages.length === 0 ? (
+            {architectMessages.length === 0 ? (
               <div className="flex flex-col items-center gap-4 pt-8 text-center">
                 <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-[var(--bg-subtle)]">
                   <Bot className="h-6 w-6 text-[var(--accent-ai-text)]" />
@@ -135,7 +486,8 @@ export function AiSidebar({ isOpen, onClose }: AiSidebarProps) {
                     <button
                       key={prompt}
                       onClick={() => submit(prompt)}
-                      className="rounded-full bg-[var(--bg-subtle)] px-3 py-2 text-left text-xs text-[var(--accent-ai-text)] transition-colors hover:bg-[var(--bg-elevated)]"
+                      disabled={isProcessing}
+                      className="rounded-full bg-[var(--bg-subtle)] px-3 py-2 text-left text-xs text-[var(--accent-ai-text)] transition-colors hover:bg-[var(--bg-elevated)] disabled:cursor-not-allowed disabled:opacity-50"
                     >
                       {prompt}
                     </button>
@@ -144,9 +496,9 @@ export function AiSidebar({ isOpen, onClose }: AiSidebarProps) {
               </div>
             ) : (
               <div className="flex flex-col gap-3">
-                {messages.map((msg, i) => (
+                {architectMessages.map((msg) => (
                   <div
-                    key={i}
+                    key={msg.id}
                     className={`flex ${
                       msg.role === "user" ? "justify-end" : "justify-start"
                     }`}
@@ -154,18 +506,44 @@ export function AiSidebar({ isOpen, onClose }: AiSidebarProps) {
                     <div
                       className={`max-w-[85%] rounded-2xl px-3 py-2 text-sm ${
                         msg.role === "user"
-                          ? "border-2 border-[var(--accent-primary)]/50 bg-[var(--accent-primary-dim)] text-[var(--text-primary)]"
-                          : "border border-[var(--border-default)] bg-[var(--bg-elevated)] text-[var(--accent-ai-text)]"
+                          ? ""
+                          : "border border-[var(--border-default)] bg-[var(--bg-elevated)] text-[var(--text-primary)]"
                       }`}
+                      style={
+                        msg.role === "user"
+                          ? { backgroundColor: GREEN_ACCENT, color: GREEN_ACCENT_TEXT }
+                          : undefined
+                      }
                     >
                       {msg.content}
                     </div>
                   </div>
                 ))}
+                {isProcessing && (
+                  <div className="flex justify-start">
+                    <div className="flex items-center gap-2 rounded-2xl border border-[var(--border-default)] bg-[var(--bg-elevated)] px-3 py-2 text-sm text-[var(--text-primary)]">
+                      <Loader2 className="h-3.5 w-3.5 animate-spin" style={{ color: GREEN_ACCENT }} />
+                      Designing...
+                    </div>
+                  </div>
+                )}
                 <div ref={bottomRef} />
               </div>
             )}
           </ScrollArea>
+
+          {/* Status strip — visible only while a run is active */}
+          {isRunActive && (
+            <div className="shrink-0 flex items-center gap-2 border-t border-[var(--border-default)] bg-[var(--bg-elevated)] px-3 py-2">
+              <Loader2
+                className="h-3 w-3 shrink-0 animate-spin"
+                style={{ color: GREEN_ACCENT }}
+              />
+              <span className="truncate text-xs" style={{ color: GREEN_ACCENT }}>
+                {sharedStatusText ?? "Ghost AI is working..."}
+              </span>
+            </div>
+          )}
 
           {/* Input */}
           <div className="shrink-0 border-t border-[var(--border-default)] p-3">
@@ -177,11 +555,91 @@ export function AiSidebar({ isOpen, onClose }: AiSidebarProps) {
                 onKeyDown={handleKeyDown}
                 placeholder="Ask Ghost AI..."
                 rows={1}
-                className="min-h-[72px] max-h-[160px] flex-1 resize-none border-[var(--border-default)] bg-[var(--bg-elevated)] text-sm text-[var(--text-primary)] placeholder:text-[var(--text-muted)] focus-visible:ring-[var(--accent-ai)]"
+                disabled={isProcessing}
+                className="min-h-[72px] max-h-[160px] flex-1 resize-none border-[var(--border-default)] bg-[var(--bg-elevated)] text-sm text-[var(--text-primary)] placeholder:text-[var(--text-muted)] focus-visible:ring-[var(--accent-ai)] disabled:opacity-50"
               />
               <Button
                 onClick={() => submit(input)}
-                disabled={!input.trim()}
+                disabled={!input.trim() || isProcessing}
+                size="icon"
+                className="shrink-0 disabled:opacity-40"
+                style={{
+                  backgroundColor: GREEN_ACCENT,
+                  color: GREEN_ACCENT_TEXT,
+                }}
+              >
+                {isProcessing ? (
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                ) : (
+                  <Send className="h-4 w-4" />
+                )}
+              </Button>
+            </div>
+            <p className="mt-1.5 text-xs text-[var(--text-faint)]">
+              Enter to send &middot; Shift+Enter for newline
+            </p>
+          </div>
+        </TabsContent>
+
+        {/* Chat tab */}
+        <TabsContent
+          value="chat"
+          className="mt-0 flex min-h-0 flex-1 flex-col overflow-hidden"
+        >
+          <ScrollArea className="min-h-0 flex-1 px-4 py-3">
+            {chatMessages.length === 0 ? (
+              <div className="flex flex-col items-center gap-3 pt-8 text-center">
+                <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-[var(--bg-subtle)]">
+                  <MessageSquare className="h-6 w-6 text-[var(--accent-ai-text)]" />
+                </div>
+                <div>
+                  <p className="text-sm font-medium text-[var(--text-primary)]">
+                    Room Chat
+                  </p>
+                  <p className="mt-1 text-xs leading-relaxed text-[var(--text-muted)]">
+                    Send messages to everyone in this room.
+                  </p>
+                </div>
+              </div>
+            ) : (
+              <div className="flex flex-col gap-3">
+                {chatMessages.map((msg) => (
+                  <div key={msg.id} className="flex flex-col gap-0.5">
+                    <div className="flex items-baseline justify-between">
+                      <span className="text-xs font-medium text-[var(--text-primary)]">
+                        {msg.sender}
+                      </span>
+                      <span className="text-[10px] text-[var(--text-faint)]">
+                        {formatTime(msg.timestamp)}
+                      </span>
+                    </div>
+                    <p className="rounded-2xl rounded-tl-sm border border-[var(--border-default)] bg-[var(--bg-elevated)] px-3 py-2 text-sm text-[var(--text-primary)]">
+                      {msg.content}
+                    </p>
+                  </div>
+                ))}
+                <div ref={chatBottomRef} />
+              </div>
+            )}
+          </ScrollArea>
+
+          <div className="shrink-0 border-t border-[var(--border-default)] p-3">
+            {chatError && (
+              <p className="mb-2 text-xs text-red-400">{chatError}</p>
+            )}
+            <div className="flex items-end gap-2">
+              <Textarea
+                ref={chatInputRef}
+                value={chatInput}
+                onChange={(e) => setChatInput(e.target.value)}
+                onKeyDown={handleChatKeyDown}
+                placeholder="Send a message..."
+                rows={1}
+                className="min-h-[72px] max-h-[160px] flex-1 resize-none border-[var(--border-default)] bg-[var(--bg-elevated)] text-sm text-[var(--text-primary)] placeholder:text-[var(--text-muted)] focus-visible:ring-[var(--accent-ai)]"
+              />
+              <Button
+                onClick={sendChat}
+                disabled={!chatInput.trim()}
                 size="icon"
                 className="shrink-0 bg-[var(--accent-primary)] text-[#080809] hover:bg-[var(--accent-primary)]/90 disabled:opacity-40"
               >
@@ -195,37 +653,102 @@ export function AiSidebar({ isOpen, onClose }: AiSidebarProps) {
         </TabsContent>
 
         {/* Specs tab */}
-        <TabsContent value="specs" className="mt-0 flex flex-col gap-3 p-4">
-          <Button className="w-full bg-[var(--accent-primary)] text-[#080809] hover:bg-[var(--accent-primary)]/90">
-            Generate Spec
-          </Button>
-
-          <div className="rounded-2xl border border-[var(--border-default)] bg-[var(--bg-elevated)] p-4">
-            <div className="flex items-start gap-3">
-              <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl bg-[var(--bg-subtle)]">
-                <FileText className="h-4 w-4 text-[var(--accent-ai-text)]" />
-              </div>
-              <div className="min-w-0 flex-1">
-                <p className="text-sm font-medium text-[var(--text-primary)]">
-                  {DEMO_SPEC.title}
-                </p>
-                <p className="mt-1 line-clamp-2 text-xs text-[var(--text-muted)]">
-                  {DEMO_SPEC.snippet}
-                </p>
-              </div>
-            </div>
-            <div className="mt-3 flex justify-end">
-              <button
-                disabled
-                className="flex cursor-not-allowed items-center gap-1.5 rounded-xl px-2.5 py-1.5 text-xs text-[var(--text-faint)] opacity-50"
-              >
-                <Download className="h-3.5 w-3.5" />
-                Download
-              </button>
-            </div>
+        <TabsContent
+          value="specs"
+          className="mt-0 flex min-h-0 flex-1 flex-col overflow-hidden"
+        >
+          <div className="shrink-0 px-4 pb-2 pt-3 flex flex-col gap-2">
+            <Button
+              onClick={generateSpec}
+              disabled={isGeneratingSpec}
+              className="w-full bg-[var(--accent-primary)] text-[#080809] hover:bg-[var(--accent-primary)]/90 disabled:opacity-50"
+            >
+              {isGeneratingSpec ? (
+                <span className="flex items-center gap-2">
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  Generating...
+                </span>
+              ) : (
+                "Generate Spec"
+              )}
+            </Button>
+            {specGenError && (
+              <p className="text-xs text-[var(--state-error)]">{specGenError}</p>
+            )}
           </div>
+
+          <ScrollArea className="min-h-0 flex-1 px-4 pb-4">
+            {specsLoading && (
+              <div className="flex items-center justify-center py-16">
+                <Loader2 className="h-5 w-5 animate-spin text-[var(--text-muted)]" />
+              </div>
+            )}
+            {!specsLoading && specs.length === 0 && (
+              <div className="flex flex-col items-center gap-3 pt-8 text-center">
+                <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-[var(--bg-subtle)]">
+                  <FileText className="h-6 w-6 text-[var(--accent-ai-text)]" />
+                </div>
+                <div>
+                  <p className="text-sm font-medium text-[var(--text-primary)]">
+                    No specs yet
+                  </p>
+                  <p className="mt-1 text-xs leading-relaxed text-[var(--text-muted)]">
+                    Generate a spec to document your architecture.
+                  </p>
+                </div>
+              </div>
+            )}
+            {!specsLoading && specs.length > 0 && (
+              <div className="flex flex-col gap-2 pt-1">
+                {specs.map((spec) => {
+                  const filename = `spec-${spec.id}.md`;
+                  return (
+                    <div
+                      key={spec.id}
+                      className="group rounded-2xl border border-[var(--border-default)] bg-[var(--bg-elevated)] p-3 transition-colors hover:border-[var(--border-subtle)]"
+                    >
+                      <button
+                        className="flex w-full items-start gap-3 text-left"
+                        onClick={() => setSelectedSpec({ id: spec.id, filename })}
+                      >
+                        <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-xl bg-[var(--bg-subtle)]">
+                          <FileText className="h-3.5 w-3.5 text-[var(--accent-ai-text)]" />
+                        </div>
+                        <div className="min-w-0 flex-1">
+                          <p className="truncate text-xs font-medium text-[var(--text-primary)]">
+                            {filename}
+                          </p>
+                          <p className="mt-0.5 text-[10px] text-[var(--text-muted)]">
+                            {formatDate(spec.createdAt)}
+                          </p>
+                        </div>
+                      </button>
+                      <div className="mt-2 flex justify-end">
+                        <a
+                          href={`/api/projects/${projectId}/specs/${spec.id}/download`}
+                          download={filename}
+                          className="flex items-center gap-1.5 rounded-xl px-2 py-1 text-[10px] text-[var(--text-faint)] transition-colors hover:bg-[var(--bg-subtle)] hover:text-[var(--text-primary)]"
+                        >
+                          <Download className="h-3 w-3" />
+                          Download
+                        </a>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </ScrollArea>
         </TabsContent>
       </Tabs>
+
+      <SpecPreviewModal
+        projectId={projectId}
+        specId={selectedSpec?.id ?? null}
+        filename={selectedSpec?.filename ?? ""}
+        open={selectedSpec !== null}
+        onClose={() => setSelectedSpec(null)}
+      />
     </aside>
   );
 }

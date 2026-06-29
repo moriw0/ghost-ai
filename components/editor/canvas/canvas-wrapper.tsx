@@ -1,41 +1,26 @@
 "use client";
 
 import { Component, type ReactNode } from "react";
-import { LiveObject, LiveMap } from "@liveblocks/client";
-import { LiveblocksProvider, RoomProvider, ClientSideSuspense } from "@liveblocks/react";
+import { ClientSideSuspense } from "@liveblocks/react";
 import { FlowCanvas } from "./flow-canvas";
 
 interface CanvasWrapperProps {
-  roomId: string;
   projectId: string;
   templatesOpen: boolean;
   onTemplatesClose: () => void;
 }
 
-export function CanvasWrapper({ roomId, projectId, templatesOpen, onTemplatesClose }: CanvasWrapperProps) {
+export function CanvasWrapper({ projectId, templatesOpen, onTemplatesClose }: CanvasWrapperProps) {
   return (
-    <LiveblocksProvider authEndpoint="/api/liveblocks-auth">
-      <RoomProvider
-        id={roomId}
-        initialPresence={{ cursor: null, thinking: false }}
-        initialStorage={() => ({
-          flow: new LiveObject({
-            nodes: new LiveMap(),
-            edges: new LiveMap(),
-          }),
-        })}
-      >
-        <CanvasErrorBoundary>
-          <ClientSideSuspense fallback={<CanvasLoading />}>
-            <FlowCanvas
-              projectId={projectId}
-              templatesOpen={templatesOpen}
-              onTemplatesClose={onTemplatesClose}
-            />
-          </ClientSideSuspense>
-        </CanvasErrorBoundary>
-      </RoomProvider>
-    </LiveblocksProvider>
+    <CanvasErrorBoundary>
+      <ClientSideSuspense fallback={<CanvasLoading />}>
+        <FlowCanvas
+          projectId={projectId}
+          templatesOpen={templatesOpen}
+          onTemplatesClose={onTemplatesClose}
+        />
+      </ClientSideSuspense>
+    </CanvasErrorBoundary>
   );
 }
 
