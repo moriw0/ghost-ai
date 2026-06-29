@@ -246,7 +246,11 @@ export function AiSidebar({ isOpen, onClose, projectId, roomId }: AiSidebarProps
       const res = await fetch("/api/ai/design", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ prompt: trimmed, roomId, projectId }),
+        body: JSON.stringify({
+          prompt: trimmed,
+          projectId,
+          requestId: crypto.randomUUID(),
+        }),
       });
 
       if (!res.ok) throw new Error("Failed to start AI task");

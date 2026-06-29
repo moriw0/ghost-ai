@@ -109,6 +109,18 @@ function buildSystemPrompt(existingNodes: CanvasNode[], existingEdges: CanvasEdg
         )}`
       : "Canvas is currently empty.";
 
+  const edgeContext =
+    existingEdges.length > 0
+      ? `Existing edges: ${JSON.stringify(
+          existingEdges.map((e) => ({
+            id: e.id,
+            source: e.source,
+            target: e.target,
+            ...(e.data?.label ? { label: e.data.label } : {}),
+          }))
+        )}`
+      : "No edges on canvas.";
+
   return `You are Ghost AI, an expert system architecture designer. Generate or modify a system architecture diagram on a canvas.
 
 Available shapes: ${shapeList}
@@ -128,7 +140,8 @@ Edge rules:
 - Only add edges between existing node IDs (including newly added ones)
 - Keep labels short (e.g. "HTTP", "gRPC", "SQL")
 
-${existingContext}`;
+${existingContext}
+${edgeContext}`;
 }
 
 async function applyDesign(

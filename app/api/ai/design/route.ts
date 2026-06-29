@@ -8,6 +8,7 @@ import type { designAgentTask } from "@/trigger/design-agent";
 const bodySchema = z.object({
   prompt: z.string().min(1),
   projectId: z.string().min(1),
+  requestId: z.string().uuid(),
 });
 
 export async function POST(request: Request): Promise<Response> {
@@ -28,7 +29,7 @@ export async function POST(request: Request): Promise<Response> {
     return Response.json({ error: "Invalid request body" }, { status: 400 });
   }
 
-  const { prompt, projectId } = parsed.data;
+  const { prompt, projectId, requestId } = parsed.data;
   // Derive roomId from the server-verified projectId to prevent IDOR via caller-supplied roomId.
   // In this app roomId === projectId (Liveblocks room is identified by the project UUID).
   const roomId = projectId;
@@ -57,17 +58,16 @@ export async function POST(request: Request): Promise<Response> {
     }
   }
 
-  const handle = await tasks.trigger<typeof designAgentTask>("design-agent", {
-    prompt,
-    roomId,
-  });
+  const handle = await tasks.trigger<typeof designAgentTask>(
+    "design-agent",
+    { prompt, roomId },
+    { idempotencyKey: `design-${projectId}-${requestId}`, idempotencyKeyTTL: "1h" },
+  );
 
-  await prisma.taskRun.create({
-    data: {
-      runId: handle.id,
-      projectId,
-      userId: identity.userId,
-    },
+  await prisma.taskRun.upsert({
+    where: { runId: handle.id },
+    create: { runId: handle.id, projectId, userId: identity.userId },
+    update: {},
   });
 
   const publicToken = await triggerAuth.createPublicToken({
